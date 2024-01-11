@@ -1,0 +1,12 @@
+main:
+    !qwer $k1, 0xDEAD, 0xbeef;
+    !bf $k1, @.loop;
+    !asdf -123, [$rv], +435;
+    !lw $k1, [$sp + 32];
+    !lw $k1, [$sp - 32];
+
+    while $t1 (!tlt $t1, $t2, $t2) {
+        !add $k1, $k0, $k0;
+    }
+
+    !halt;

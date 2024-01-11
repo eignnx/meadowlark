@@ -1,0 +1,100 @@
+use crate::ast::{
+    Instr,
+    Reg,
+    Arg,
+    Stmt,
+};
+
+grammar;
+
+pub Program: Vec<Stmt> = {
+    <stmts: Stmt*> => stmts,
+};
+
+Stmt: Stmt = {
+    <instr: Instr> ";" => Stmt::Instr(instr),
+    <label: LabelIdent> r":" => Stmt::Label(label.to_string()),
+    <while_loop: WhileLoop> => while_loop,
+};
+WhileLoop: Stmt = {
+    "while" <test_reg: Reg> "(" <first: Instr> <rest_test_cond: RestTestCond?> ")" "{" <body: Stmt*> "}" => Stmt::While {
+        test_reg,
+        test_cond: std::iter::once(first).chain(rest_test_cond.into_iter().flatten()).collect(),
+        body,
+    },
+};
+
+RestTestCond: Vec<Instr> = {
+    <instrs: (";" <Instr>)+> => instrs,
+};
+
+Instr: Instr = {
+    <op: OpName> => Instr { op, args: vec![] },
+    <op: OpName> <fst: Arg> <rest: ("," <Arg>)*> => {
+        let args = std::iter::once(fst).chain(rest.into_iter()).collect();
+        Instr { op, args }
+    },
+};
+
+LabelIdent: String = <id: r#"[a-zA-Z_.][a-zA-Z0-9_.]*"#> => id.to_string();
+OpName: String = <op: r"![a-z]+"> => op[1..].to_string();
+
+Arg: Arg = {
+    <reg: Reg> => Arg::Reg(reg),
+    <i: ImmOrOffset> => i,
+    r"@" <label: LabelIdent> => Arg::Label(label.to_string()),
+};
+
+ImmOrOffset: Arg = {
+    "[" <reg: Reg> "+" <imm: Unsigned> "]" => Arg::Offset(imm as i16, reg),
+    "[" <reg: Reg> "-" <imm: Unsigned> "]" => Arg::Offset(-(imm as i16), reg),
+    "[" <reg: Reg> "]" => Arg::Offset(0, reg),
+    <imm: Integer> => imm,
+};
+
+Integer: Arg = {
+    <u: Unsigned> => Arg::Uint(u),
+    <i: Signed> => Arg::Int(i),
+};
+
+Unsigned: u16 = {
+    <n: r"0x[0-9a-fA-F]+"> => {
+        let n = &n[2..].to_ascii_lowercase();
+        return u16::from_str_radix(n, 16).expect("parse hexadecimal number");
+    },
+    <n: r"0b[01]+"> => {
+        let n = &n[2..].to_ascii_lowercase();
+        return u16::from_str_radix(n, 2).expect("parse binary number");
+    },
+    <n: r"[0-9]+"> => n.parse().unwrap(),
+};
+
+Signed: i16 = {
+    <n: r"\+[0-9]+"> => n.parse().unwrap(),
+    <n: r"\-[0-9]+"> => n.parse().unwrap(),
+}
+
+Reg: Reg = {
+    <name: r"\$[a-z]+"> <id: r"[0-9]+"?> => {
+        let name = name[1..].to_string(); // remove the "$" from the name
+        if let Some(id) = id {
+            let id = id.parse().unwrap();
+            match (&name[..], id) {
+                ("a", 0..=2) => Reg::Arg(id),
+                ("s", 0..=2) => Reg::Saved(id),
+                ("t", 0..=2) => Reg::Temp(id),
+                ("k", 0..=1) => Reg::Kernel(id),
+                _ => panic!("unknown register: `${}{}`", name, id),
+            }
+        } else {
+            match &name[..] {
+                "zero" => Reg::Zero,
+                "rv" => Reg::Rv,
+                "ra" => Reg::Ra,
+                "gp" => Reg::Gp,
+                "sp" => Reg::Sp,
+                _ => panic!("unknown register: {}", name),
+            }
+        }
+    }
+};
