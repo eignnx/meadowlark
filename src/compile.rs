@@ -26,7 +26,6 @@ impl CodeGen {
     fn filename(&self) -> &str {
         self.filename
             .as_ref()
-            .and_then(|p| p.file_name())
             .and_then(|p| p.to_str())
             .unwrap_or("<unknown>")
     }
@@ -64,6 +63,11 @@ impl CodeGen {
                 preserve_regs,
                 body,
             } => {
+                self.current_fn = Some(FnInfo {
+                    fn_name: name.clone(),
+                    callee_regs_to_save: preserve_regs.clone(),
+                });
+
                 self.comment(
                     out,
                     format!(
@@ -86,12 +90,17 @@ impl CodeGen {
                 for arg in args {
                     match arg {
                         FnParam::ImpliedAlias(v) => {
-                            let Some(reg) = available_argument_registers.iter().next() else {
+                            let Some(reg) = available_argument_registers.pop_first() else {
                                 eprintln!("Warning [{}#{}]:", self.filename(), name);
-                                eprintln!("\tNo more argument registers available for `{}`.", v);
-                                continue;
+                                eprintln!("\tNo more argument registers available for `{v}`.");
+                                eprintln!();
+                                eprintln!("\thint: Consider assigning variable `{v}` as stack location:");
+                                eprintln!("\t```");
+                                eprintln!("\tfn {}(.., {v} => [$sp-INDEX], ..) {{", self.current_fn_name());
+                                eprintln!("\t```");
+                                std::process::exit(1);
                             };
-                            self.var_aliases.insert(v.clone(), LValue::Reg(*reg));
+                            self.var_aliases.insert(v.clone(), LValue::Reg(reg));
                         }
                         FnParam::Alias(v, lvalue) => {
                             if let LValue::Reg(Reg::Arg(a)) = lvalue {
@@ -113,11 +122,6 @@ impl CodeGen {
                         }
                     }
                 }
-
-                self.current_fn = Some(FnInfo {
-                    fn_name: name.clone(),
-                    callee_regs_to_save: preserve_regs.clone(),
-                });
 
                 if !preserve_regs.is_empty() {
                     let reg_list = 
