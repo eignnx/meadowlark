@@ -8,10 +8,39 @@ pub enum Item {
     },
     FnDef {
         name: String,
-        args: Vec<Var>,
+        args: Vec<FnParam>,
         preserve_regs: Vec<Reg>,
         body: Vec<Stmt>,
     },
+}
+
+#[derive(Debug)]
+pub enum FnParam {
+    /// Example: `x` (Gets bound to one of `$a0..$a2`)
+    ImpliedAlias(Var),
+    /// Example: `x => $a2`
+    Alias(Var, LValue),
+    // TODO: Structs
+    // Struct {
+    //     var_name: Var,
+    //     struct_name: String,
+    //     mappings: Vec<(String, LValue)>,
+    // }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum LValue {
+    Reg(Reg),
+    Mem(Reg, i16),
+}
+
+impl fmt::Display for LValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LValue::Reg(reg) => write!(f, "{}", reg),
+            LValue::Mem(reg, offset) => write!(f, "{}({})", offset, reg),
+        }
+    }
 }
 
 pub type Var = String;
@@ -42,11 +71,24 @@ pub struct Instr {
 
 #[derive(Debug)]
 pub enum Arg {
+    /// Example: `0xBEEF`
     Uint(u16),
+    /// Example: `+23`, `-23`
     Int(i16),
+    /// Example: `@some_label`
     Label(String),
+    /// Example: `$t0`, `$rv`
     Reg(Reg),
+    /// Examples:
+    /// - `[$a0]`
+    /// - `[$a0 + 4]`
+    /// - `[$a0 - 4]`
+    /// - `[0xBEEF]`
     Offset(i16, Reg),
+    /// Example: `[some_arg]`
+    AliasIndirection(Var),
+    /// Example: `some_arg`
+    Alias(Var),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -69,6 +111,10 @@ impl Reg {
             Reg::Ra | Reg::Saved(_) | Reg::Gp | Reg::Sp => true,
             Reg::Zero | Reg::Rv | Reg::Arg(_) | Reg::Temp(_) | Reg::Kernel(_) => false,
         }
+    }
+
+    pub fn argument_registers() -> impl Iterator<Item = Reg> {
+        (0..3).map(Reg::Arg)
     }
 }
 

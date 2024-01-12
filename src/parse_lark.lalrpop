@@ -1,5 +1,7 @@
 use crate::ast::{
     Item,
+    FnParam,
+    LValue,
     Stmt,
     Instr,
     Arg,
@@ -17,14 +19,14 @@ pub Program: Vec<Item> = {
 Item: Item = {
     "def" <name: LabelIdent> ":" "u16" "=" <value: Unsigned> ";" => Item::Const { name, value },
     "fn" <fn_name: LabelIdent> "("
-        <args: (LabelIdent ("," <LabelIdent>)*)?>
+        <args: (FnParam ("," <FnParam>)*)?>
     ")" <save_regs: ("preserve" "("
         <(Reg ("," <Reg>)*)?>
     ")")?> "{" <body: Stmt*> "}" => Item::FnDef {
         name: fn_name,
 
         args: args.map(|(first, rest)| {
-            std::iter::once(first.to_string()).chain(rest.into_iter()).collect()
+            std::iter::once(first).chain(rest.into_iter()).collect()
         }).unwrap_or_default(),
 
         preserve_regs: save_regs.map(|opt| {
@@ -39,6 +41,18 @@ Item: Item = {
         body,
     },
 }
+
+FnParam: FnParam = {
+    <name: LabelIdent> "=>" <lvalue: LValue> => FnParam::Alias(name.to_string(), lvalue),
+    <name: LabelIdent> => FnParam::ImpliedAlias(name.to_string()),
+};
+
+LValue: LValue = {
+    <reg: Reg> => LValue::Reg(reg),
+    "[" <reg: Reg> <offset: Signed> "]" => LValue::Mem(reg, offset),
+    "[" <addr: Unsigned> "]" => LValue::Mem(Reg::Zero, addr as i16),
+    "[" <reg: Reg> "]" => LValue::Mem(reg, 0),
+};
 
 Stmt: Stmt = {
     "restore" ";" => Stmt::Restore,
@@ -90,12 +104,15 @@ Arg: Arg = {
     <reg: Reg> => Arg::Reg(reg),
     <i: ImmOrOffset> => i,
     r"@" <label: LabelIdent> => Arg::Label(label.to_string()),
+    <var_name: LabelIdent> => Arg::Alias(var_name.to_string()),
 };
 
 ImmOrOffset: Arg = {
     "[" <reg: Reg> "+" <imm: Unsigned> "]" => Arg::Offset(imm as i16, reg),
     "[" <reg: Reg> "-" <imm: Unsigned> "]" => Arg::Offset(-(imm as i16), reg),
     "[" <reg: Reg> "]" => Arg::Offset(0, reg),
+    "[" <imm: Unsigned> "]" => Arg::Offset(imm as i16, Reg::Zero),
+    "[" <var_name: LabelIdent> "]" => Arg::AliasIndirection(var_name.to_string()),
     <imm: Integer> => imm,
 };
 

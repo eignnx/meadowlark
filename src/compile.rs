@@ -1,45 +1,41 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, BTreeSet};
+use std::path::PathBuf;
 use std::fmt;
 
 use crate::ast::*;
-
-struct LabelIndexes {
-    indexes: HashMap<String, usize>,
-}
-
-impl LabelIndexes {
-    fn new() -> Self {
-        Self {
-            indexes: HashMap::new(),
-        }
-    }
-
-    fn fresh(&mut self, prefix: &str) -> String {
-        // Increments the label index and returns the previous value
-        let index = self.indexes.entry(prefix.to_string()).or_insert(0);
-        let prev = *index;
-        *index += 1;
-        format!("{}{}", prefix, prev)
-    }
-}
-
-struct FnInfo {
-    callee_regs_to_save: Vec<Reg>,
-}
 
 pub struct CodeGen {
     label_indexes: LabelIndexes,
     emit_comments: bool,
     current_fn: Option<FnInfo>,
+    filename: Option<PathBuf>,
+    var_aliases: HashMap<Var, LValue>,
 }
 
 impl CodeGen {
-    pub fn new() -> Self {
+    pub fn new(filename: impl Into<Option<PathBuf>>) -> Self {
         Self {
             label_indexes: LabelIndexes::new(),
             emit_comments: true,
             current_fn: None,
+            filename: filename.into(),
+            var_aliases: HashMap::new(),
         }
+    }
+
+    fn filename(&self) -> &str {
+        self.filename
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .and_then(|p| p.to_str())
+            .unwrap_or("<unknown>")
+    }
+
+    fn current_fn_name(&self) -> &str {
+        self.current_fn
+            .as_ref()
+            .map(|f| f.fn_name.as_str())
+            .unwrap_or("<unknown-fn>")
     }
 
     fn comment(&self, out: &mut dyn fmt::Write, comment: &str) -> std::fmt::Result {
@@ -74,7 +70,10 @@ impl CodeGen {
                         "<FnDef name={} args=[{}]>",
                         name,
                         args.iter()
-                            .map(|a| a.to_string())
+                            .map(|a| match a {
+                                FnParam::ImpliedAlias(v) => v.to_string(),
+                                FnParam::Alias(v, _) => v.to_string(),
+                            })
                             .collect::<Vec<_>>()
                             .join(", ")
                     )
@@ -82,20 +81,59 @@ impl CodeGen {
                 )?;
                 writeln!(out, "{}:", name)?;
 
+                self.var_aliases.clear();
+                let mut available_argument_registers = BTreeSet::from_iter(Reg::argument_registers()); 
+                for arg in args {
+                    match arg {
+                        FnParam::ImpliedAlias(v) => {
+                            let Some(reg) = available_argument_registers.iter().next() else {
+                                eprintln!("Warning [{}#{}]:", self.filename(), name);
+                                eprintln!("\tNo more argument registers available for `{}`.", v);
+                                continue;
+                            };
+                            self.var_aliases.insert(v.clone(), LValue::Reg(*reg));
+                        }
+                        FnParam::Alias(v, lvalue) => {
+                            if let LValue::Reg(Reg::Arg(a)) = lvalue {
+                                if !available_argument_registers.remove(&Reg::Arg(*a)) {
+                                    let prev_use = self.var_aliases.iter().find(|(_, l)| match l {
+                                        LValue::Reg(Reg::Arg(a)) => a == a,
+                                        _ => false,
+                                    }).map(|(v, _)| v).unwrap();
+                                    eprintln!("Warning [{}#{}]:", self.filename(), name);
+                                    eprintln!(
+                                        "\tArgument register `{}` already assigned to argument `{}`.",
+                                        Reg::Arg(*a),
+                                        prev_use,
+                                    );
+                                    continue;
+                                }
+                            }
+                            self.var_aliases.insert(v.clone(), lvalue.clone());
+                        }
+                    }
+                }
+
                 self.current_fn = Some(FnInfo {
+                    fn_name: name.clone(),
                     callee_regs_to_save: preserve_regs.clone(),
                 });
 
                 if !preserve_regs.is_empty() {
+                    let reg_list = 
+                            preserve_regs
+                                .iter()
+                                .inspect(|r| if !r.is_callee_saved() {
+                                    eprintln!("Warning [{}#{}]:", self.filename(), name);
+                                    eprintln!("\tRegister `{r}` is not callee saved and usually does not need to be preserved.");
+                                })
+                                .map(|r| r.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ");
                     self.comment(
                         out,
                         format!(
-                            "<Preserve regs=[{}]>",
-                            preserve_regs
-                                .iter()
-                                .map(|r| r.to_string())
-                                .collect::<Vec<_>>()
-                                .join(", ")
+                            "<Preserve regs=[{reg_list}]>"
                         )
                         .as_str(),
                     )?;
@@ -231,6 +269,50 @@ impl CodeGen {
             Arg::Label(name) => write!(out, "{}", name),
             Arg::Reg(reg) => write!(out, "{}", reg),
             Arg::Offset(n, reg) => write!(out, "{}({})", n, reg),
+            Arg::AliasIndirection(name) => {
+                let Some(resolved) = self.var_aliases.get(name) else {
+                    eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());
+                    eprintln!("\tUndefined variable `{}`.", name);
+                    std::process::exit(1);
+                };
+                match resolved {
+                    LValue::Reg(reg) => write!(out, "0({reg})"),
+                    LValue::Mem(reg, offset) => write!(out, "{offset}({reg})"),
+                }
+            }
+            Arg::Alias(name) => {
+                let Some(resolved) = self.var_aliases.get(name) else {
+                    eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());
+                    eprintln!("\tUndefined variable `{}`.", name);
+                    std::process::exit(1);
+                };
+                write!(out, "{}", resolved)
+            }
         }
+    }
+}
+
+struct FnInfo {
+    fn_name: String,
+    callee_regs_to_save: Vec<Reg>,
+}
+
+struct LabelIndexes {
+    indexes: HashMap<String, usize>,
+}
+
+impl LabelIndexes {
+    fn new() -> Self {
+        Self {
+            indexes: HashMap::new(),
+        }
+    }
+
+    fn fresh(&mut self, prefix: &str) -> String {
+        // Increments the label index and returns the previous value
+        let index = self.indexes.entry(prefix.to_string()).or_insert(0);
+        let prev = *index;
+        *index += 1;
+        format!("{}{}", prefix, prev)
     }
 }

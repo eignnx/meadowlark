@@ -1,0 +1,7 @@
+fn main(argv, argc => $a1, blah => [$sp-2]) {
+    !lw $t0, [argv];
+    !lw $t1, blah;
+    !sw [0x0001], $t0;
+    !sw [0x0001], argc;
+    !jr $ra;
+}

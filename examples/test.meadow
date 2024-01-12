@@ -1,9 +1,32 @@
 
 def BLAH: u16 = 123;
 
+struct ConsCell {
+    car: u16,
+    cdr: *ConsCell,
+}
+
+fn list.len(list: ConsCell { car => $a0, cdr => $a1 }) {
+    if list.cdr {
+        !jal $ra, @list.len;
+        !addi $rv, $rv, 1;
+    } else {
+        !li $rv, 1;
+    }
+    !jr $ra;
+}
+
 fn main(argc, argv) preserve ($ra, $s0, $s2) {
     
     !addi $sp, $sp, -4;
+
+    def list = ConsCell {
+        $t0 => car,
+        [$s0 + 4] => cdr,
+    };
+
+    !li list.car, 321;
+    !sw list.cdr, $a1;
 
     !qwer $k1, 0xDEAD, 0xbeef;
     !bf $k1, @.loop;
@@ -23,7 +46,8 @@ fn main(argc, argv) preserve ($ra, $s0, $s2) {
         !addi $s0, $s0, 1;
     }
 
-    !halt;
+    !li $a0, 14;
+    !jal $ra, @fib;
 
     while $t1 (
         !li $t2, 100;
@@ -50,29 +74,6 @@ fn main(argc, argv) preserve ($ra, $s0, $s2) {
 fn use_saved_regs(x) preserve ($s0, $s1) {
     !addi $s0, $a0, 123;
     !addi $s1, $s0, 456;
-    restore;
-    !jr $ra;
-}
-
-fn fib(n) preserve ($ra, $s0, $s1) {
-    if $t0 (
-        !li $t1, 2;
-        !tlt $t0, $a0, $t1;
-    ) do {
-        !mov $rv, $a0;
-    } else {
-        !mov $s0, $a0;
-
-        !subi $a0, $s0, 1;
-        !jal $ra, @fib;
-        !mov $s1, $rv;
-
-        !subi $a0, $s0, 2;
-        !jal $ra, @fib;
-
-        !add $rv, $s1, $rv;
-    }
-
     restore;
     !jr $ra;
 }
