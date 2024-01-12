@@ -1,12 +1,52 @@
-main:
+
+def BLAH: u16 = 123;
+
+fn main(argc, argv) {
+    !addi $sp, $sp, -4;
+
     !qwer $k1, 0xDEAD, 0xbeef;
     !bf $k1, @.loop;
     !asdf -123, [$rv], +435;
     !lw $k1, [$sp + 32];
     !lw $k1, [$sp - 32];
 
-    while $t1 (!tlt $t1, $t2, $t2) {
-        !add $k1, $k0, $k0;
+    !halt;
+
+    !li $a0, 123;
+    !jal $ra, @use_saved_regs;
+
+    if $t0 (
+        !tge $t0, $t1
+    ) do {
+        !add $k0, $k0, $k0;
+        !addi $s0, $s0, 1;
     }
 
     !halt;
+
+    while $t1 (
+        !li $t2, 100;
+        !tlt $t1, $s0, $t2;
+    ) do {
+        !add $k0, $k0, $k0;
+        !addi $s2, $s0, 1;
+    }
+
+    if $t0 (
+        !tge $t0, $t1
+    ) do {
+        !add $k0, $k0, $k0;
+        !addi $s0, $s0, 1;
+    } else {
+        !add $k0, $k0, $k0;
+        !addi $s0, $s0, 1;
+    }
+
+    !halt;
+}
+
+fn use_saved_regs(x) {
+    !addi $s0, $a0, 123;
+    !addi $s1, $s0, 456;
+    !jr $ra;
+}

@@ -44,7 +44,9 @@ fn main() {
     let mut out = String::new();
     let mut codegen = compile::CodeGen::new();
     codegen.compile(&mut out, ast).unwrap();
-    println!("^^^^^^^^^^^^^^^^^^\n{}\n^^^^^^^^^^^^^^^^^^^^", out);
+    println!("`````````````````");
+    println!("{out}");
+    println!("`````````````````");
 }
 
 fn display_error<E>(e: ParseError<usize, Token, E>, path: &str, src: &str)

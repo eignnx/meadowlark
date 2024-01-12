@@ -1,23 +1,54 @@
 use crate::ast::{
-    Instr,
-    Reg,
-    Arg,
+    Item,
     Stmt,
+    Instr,
+    Arg,
+    Reg,
 };
 
 grammar;
 
-pub Program: Vec<Stmt> = {
-    <stmts: Stmt*> => stmts,
+pub Program: Vec<Item> = {
+    <items: Item*> => items,
 };
+
+
+
+Item: Item = {
+    "def" <name: LabelIdent> ":" "u16" "=" <value: Unsigned> ";" => Item::Const { name, value },
+    "fn" <fn_name: LabelIdent> "(" <args: (LabelIdent ("," <LabelIdent>)*)?> ")" "{" <body: Stmt*> "}" => Item::FnDef {
+        name: fn_name,
+        args: args.map(|(first, rest)| {
+            std::iter::once(first.to_string()).chain(rest.into_iter()).collect()
+        }).unwrap_or_default(),
+        body,
+    },
+}
 
 Stmt: Stmt = {
     <instr: Instr> ";" => Stmt::Instr(instr),
     <label: LabelIdent> r":" => Stmt::Label(label.to_string()),
+    <if_stmt: IfStmt> => if_stmt,
     <while_loop: WhileLoop> => while_loop,
 };
+
+IfStmt: Stmt = {
+    "if" <test_reg: Reg> "("
+        <first: Instr> <rest_test_cond: RestTestCond?>
+    ")" "do" "{"
+        <then_body: Stmt*>
+    "}" <else_body: ("else" "{"
+         <Stmt*>
+    "}")?> => Stmt::If {
+        test_reg,
+        test_cond: std::iter::once(first).chain(rest_test_cond.into_iter().flatten()).collect(),
+        consequent: then_body,
+        alternative: else_body,
+    },
+};
+
 WhileLoop: Stmt = {
-    "while" <test_reg: Reg> "(" <first: Instr> <rest_test_cond: RestTestCond?> ")" "{" <body: Stmt*> "}" => Stmt::While {
+    "while" <test_reg: Reg> "(" <first: Instr> <rest_test_cond: RestTestCond?> ")" "do" "{" <body: Stmt*> "}" => Stmt::While {
         test_reg,
         test_cond: std::iter::once(first).chain(rest_test_cond.into_iter().flatten()).collect(),
         body,
@@ -25,7 +56,7 @@ WhileLoop: Stmt = {
 };
 
 RestTestCond: Vec<Instr> = {
-    <instrs: (";" <Instr>)+> => instrs,
+    <instrs: (";" <Instr>)+> ";" => instrs,
 };
 
 Instr: Instr = {
