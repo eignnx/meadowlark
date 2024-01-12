@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::fmt;
 
 #[derive(Debug)]
@@ -10,6 +9,7 @@ pub enum Item {
     FnDef {
         name: String,
         args: Vec<Var>,
+        preserve_regs: Vec<Reg>,
         body: Vec<Stmt>,
     },
 }
@@ -20,6 +20,7 @@ pub type Var = String;
 pub enum Stmt {
     Label(String),
     Instr(Instr),
+    Restore,
     If {
         test_reg: Reg,
         test_cond: Vec<Instr>,
@@ -33,87 +34,10 @@ pub enum Stmt {
     },
 }
 
-impl Stmt {
-    pub fn callee_regs_to_save(&self, regs: &mut BTreeSet<Reg>) {
-        match self {
-            Stmt::Label(_) => {}
-            Stmt::Instr(instr) => instr.callee_regs_to_save(regs),
-            Stmt::If {
-                test_cond,
-                consequent,
-                alternative,
-                ..
-            } => {
-                // Note: we don't need to save the test_reg because it's an rvalue.
-                for instr in test_cond {
-                    instr.callee_regs_to_save(regs);
-                }
-                for stmt in consequent {
-                    stmt.callee_regs_to_save(regs);
-                }
-                if let Some(alternative) = alternative {
-                    for stmt in alternative {
-                        stmt.callee_regs_to_save(regs);
-                    }
-                }
-            }
-            Stmt::While {
-                test_cond, body, ..
-            } => {
-                // Note: we don't need to save the test_reg because it's an rvalue.
-                for instr in test_cond {
-                    instr.callee_regs_to_save(regs);
-                }
-                for stmt in body {
-                    stmt.callee_regs_to_save(regs);
-                }
-            }
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct Instr {
     pub op: String,
     pub args: Vec<Arg>,
-}
-
-impl Instr {
-    pub fn callee_regs_to_save(&self, regs: &mut BTreeSet<Reg>) {
-        // We only need to look at the first argument, because that's the
-        // destination register/memory location.
-        let Some(first_arg) = self.args.first() else {
-            return;
-        };
-
-        if !self.modifies_first_arg() {
-            // If the instruction doesn't modify the first argument, then we
-            // don't need to consider it further.
-            return;
-        }
-
-        match first_arg {
-            Arg::Uint(_) | Arg::Int(_) | Arg::Label(_) => {}
-            Arg::Reg(reg) => {
-                if reg.is_callee_saved() {
-                    regs.insert(*reg);
-                }
-            }
-            Arg::Offset(_, reg) => {
-                if reg.is_callee_saved() {
-                    regs.insert(*reg);
-                }
-            }
-        }
-    }
-
-    fn modifies_first_arg(&self) -> bool {
-        match self.op.as_ref() {
-            // These instructions' first arg are read-only.
-            "jr" /* <jumpreg> */ | "bt" /* <testreg>, <addr> */ | "bf" /* <testreg>, <addr> */ => false,
-            _ => true,
-        }
-    }
 }
 
 #[derive(Debug)]
@@ -139,6 +63,7 @@ pub enum Reg {
 }
 
 impl Reg {
+    #[allow(unused)]
     pub fn is_callee_saved(&self) -> bool {
         match self {
             Reg::Ra | Reg::Saved(_) | Reg::Gp | Reg::Sp => true,

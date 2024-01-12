@@ -1,7 +1,8 @@
 
 def BLAH: u16 = 123;
 
-fn main(argc, argv) {
+fn main(argc, argv) preserve ($ra, $s0, $s2) {
+    
     !addi $sp, $sp, -4;
 
     !qwer $k1, 0xDEAD, 0xbeef;
@@ -42,11 +43,41 @@ fn main(argc, argv) {
         !addi $s0, $s0, 1;
     }
 
-    !halt;
+    restore;
+    !jr $ra;
 }
 
-fn use_saved_regs(x) {
+fn use_saved_regs(x) preserve ($s0, $s1) {
     !addi $s0, $a0, 123;
     !addi $s1, $s0, 456;
+    restore;
+    !jr $ra;
+}
+
+fn fib(n) preserve ($ra, $s0, $s1) {
+    if $t0 (
+        !li $t1, 2;
+        !tlt $t0, $a0, $t1;
+    ) do {
+        !mov $rv, $a0;
+    } else {
+        !mov $s0, $a0;
+
+        !subi $a0, $s0, 1;
+        !jal $ra, @fib;
+        !mov $s1, $rv;
+
+        !subi $a0, $s0, 2;
+        !jal $ra, @fib;
+
+        !add $rv, $s1, $rv;
+    }
+
+    restore;
+    !jr $ra;
+}
+
+fn add1(a) {
+    !addi $rv, $a0, 1;
     !jr $ra;
 }

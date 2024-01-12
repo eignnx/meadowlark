@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::fmt;
 
 use crate::ast::*;
@@ -23,9 +23,14 @@ impl LabelIndexes {
     }
 }
 
+struct FnInfo {
+    callee_regs_to_save: Vec<Reg>,
+}
+
 pub struct CodeGen {
     label_indexes: LabelIndexes,
     emit_comments: bool,
+    current_fn: Option<FnInfo>,
 }
 
 impl CodeGen {
@@ -33,6 +38,7 @@ impl CodeGen {
         Self {
             label_indexes: LabelIndexes::new(),
             emit_comments: true,
+            current_fn: None,
         }
     }
 
@@ -58,48 +64,52 @@ impl CodeGen {
 
             Item::FnDef {
                 name,
-                args: _,
+                args,
+                preserve_regs,
                 body,
             } => {
-                // Compute the set of callee-saved registers used in this function.
-                let mut regs_to_save = BTreeSet::new();
-                for stmt in body {
-                    stmt.callee_regs_to_save(&mut regs_to_save);
-                }
-
-                self.comment(out, "<FnDef>")?;
+                self.comment(
+                    out,
+                    format!(
+                        "<FnDef name={} args=[{}]>",
+                        name,
+                        args.iter()
+                            .map(|a| a.to_string())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                    .as_str(),
+                )?;
                 writeln!(out, "{}:", name)?;
 
-                {
-                    self.comment(out, "<FnDef.Prelude>")?;
-                    writeln!(out, "\tsubi\t$sp, $sp, {}", regs_to_save.len() * 2)?;
+                self.current_fn = Some(FnInfo {
+                    callee_regs_to_save: preserve_regs.clone(),
+                });
 
-                    for (i, reg) in regs_to_save.iter().enumerate() {
+                if !preserve_regs.is_empty() {
+                    self.comment(
+                        out,
+                        format!(
+                            "<Preserve regs=[{}]>",
+                            preserve_regs
+                                .iter()
+                                .map(|r| r.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        )
+                        .as_str(),
+                    )?;
+                    writeln!(out, "\tsubi\t$sp, $sp, {}", preserve_regs.len() * 2)?;
+                    for (i, reg) in preserve_regs.iter().enumerate() {
                         let offset = i * 2;
                         writeln!(out, "\tsw\t{offset}($sp), {reg}")?;
                     }
-                    self.comment(out, "</FnDef.Prelude>")?;
+                    self.comment(out, "</Preserve>")?;
                 }
 
-                self.comment(out, "<FnDef.Body>")?;
                 for stmt in body {
                     self.compile_stmt(out, stmt)?;
                 }
-                self.comment(out, "</FnDef.Body>")?;
-
-                let mut write_epilogue = || -> fmt::Result {
-                    self.comment(out, "<FnDef.Epilogue>")?;
-                    for (i, reg) in regs_to_save.iter().enumerate() {
-                        let offset = i * 2;
-                        writeln!(out, "\tlw\t{reg}, {offset}($sp)")?;
-                    }
-                    writeln!(out, "\taddi\t$sp, $sp, {}", regs_to_save.len() * 2)?;
-                    self.comment(out, "</FnDef.Epilogue>")?;
-                    Ok(())
-                };
-
-                write_epilogue()?;
-
                 self.comment(out, "</FnDef>")?;
             }
         }
@@ -113,6 +123,21 @@ impl CodeGen {
             Stmt::Label(name) => writeln!(out, "{}:", name)?,
 
             Stmt::Instr(instr) => self.compile_instr(out, instr)?,
+
+            Stmt::Restore => {
+                let regs_to_restore = &self
+                    .current_fn
+                    .as_ref()
+                    .expect("current function set")
+                    .callee_regs_to_save;
+                self.comment(out, "<Restore>")?;
+                for (i, reg) in regs_to_restore.iter().enumerate() {
+                    let offset = i * 2;
+                    writeln!(out, "\tlw\t{reg}, {offset}($sp)")?;
+                }
+                writeln!(out, "\taddi\t$sp, $sp, {}", regs_to_restore.len() * 2)?;
+                self.comment(out, "</Restore>")?;
+            }
 
             Stmt::If {
                 test_reg,

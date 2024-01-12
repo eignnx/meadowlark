@@ -16,16 +16,32 @@ pub Program: Vec<Item> = {
 
 Item: Item = {
     "def" <name: LabelIdent> ":" "u16" "=" <value: Unsigned> ";" => Item::Const { name, value },
-    "fn" <fn_name: LabelIdent> "(" <args: (LabelIdent ("," <LabelIdent>)*)?> ")" "{" <body: Stmt*> "}" => Item::FnDef {
+    "fn" <fn_name: LabelIdent> "("
+        <args: (LabelIdent ("," <LabelIdent>)*)?>
+    ")" <save_regs: ("preserve" "("
+        <(Reg ("," <Reg>)*)?>
+    ")")?> "{" <body: Stmt*> "}" => Item::FnDef {
         name: fn_name,
+
         args: args.map(|(first, rest)| {
             std::iter::once(first.to_string()).chain(rest.into_iter()).collect()
         }).unwrap_or_default(),
+
+        preserve_regs: save_regs.map(|opt| {
+            match opt {
+                Some((first, rest)) => {
+                    std::iter::once(first).chain(rest.into_iter()).collect()
+                },
+                None => vec![],
+            }
+        }).unwrap_or_default(),
+
         body,
     },
 }
 
 Stmt: Stmt = {
+    "restore" ";" => Stmt::Restore,
     <instr: Instr> ";" => Stmt::Instr(instr),
     <label: LabelIdent> r":" => Stmt::Label(label.to_string()),
     <if_stmt: IfStmt> => if_stmt,
