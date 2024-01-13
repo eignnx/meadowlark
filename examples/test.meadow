@@ -6,13 +6,17 @@ struct ConsCell {
     cdr: *ConsCell,
 }
 
-fn list.len(list: ConsCell { car => $a0, cdr => $a1 }) {
+fn list.len(list: ConsCell { car => $a0, cdr => $a1 })
+    preserve ($ra)
+{
     if list.cdr {
-        !jal $ra, @list.len;
         !addi $rv, $rv, 1;
+        !lw cdr, [cdr+2];
+        !j @list.len;
     } else {
         !li $rv, 1;
     }
+    restore;
     !jr $ra;
 }
 
