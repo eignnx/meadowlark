@@ -85,6 +85,8 @@ pub enum Arg {
     Uint(u16),
     /// Example: `+23`, `-23`
     Int(i16),
+    /// Example: `'a'`, `\n`
+    Char(u8),
     /// Example: `@some_label`
     Label(String),
     /// Example: `$t0`, `$rv`

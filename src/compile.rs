@@ -417,6 +417,7 @@ impl CodeGen {
         match arg {
             Arg::Uint(n) => write!(out, "{}", n),
             Arg::Int(n) => write!(out, "{}", n),
+            Arg::Char(c) => write!(out, "{}", c),
             Arg::Label(name) => write!(out, "{}", name),
             Arg::Reg(reg) => write!(out, "{}", reg),
             Arg::Offset(n, reg) => write!(out, "{}({})", n, reg),

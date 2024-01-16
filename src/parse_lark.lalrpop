@@ -1,3 +1,5 @@
+use lalrpop_util::ParseError;
+
 use crate::ast::{
     Item,
     AliasBinding,
@@ -9,6 +11,12 @@ use crate::ast::{
 };
 
 grammar;
+
+match {
+    r"\s+" => { },
+    r"#[^\n\r]*[\n\r]*" => { }, // comments begin with #
+    _,
+}
 
 pub Program: Vec<Item> = {
     <items: Item*> => items,
@@ -108,6 +116,23 @@ OpName: String = <op: r"![a-z]+"> => op[1..].to_string();
 Arg: Arg = {
     <reg: Reg> => Arg::Reg(reg),
     <i: ImmOrOffset> => i,
+    <char_content: r"'[^']+'"> =>? Ok(Arg::Char(
+        match &char_content[1..char_content.len()-1] {
+            r"\n" => b'\n',
+            r"\t" => b'\t',
+            r"\r" => b'\r',
+            r"\'" => b'\'',
+            r"\\" => b'\\',
+            r"\0" => b'\0',
+            empty if empty.is_empty() => return Err(
+                ParseError::User { error: "character literal cannot be empty" }
+            ),
+            text if text.len() == 1 => text.bytes().next().unwrap(),
+            text => return Err(
+                ParseError::User { error: "character literal must be a single character" }
+            ),
+        }
+    )),
     r"@" <label: LabelIdent> => Arg::Label(label.to_string()),
     <var_name: LabelIdent> => Arg::Alias(var_name.to_string()),
 };

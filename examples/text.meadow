@@ -1,0 +1,7 @@
+fn main() {
+    !li $t0, 'X'; # comments?
+    !sw [0x0001], $t0;
+    !li $t0, '\n';
+    !sw [0x0001], $t0;
+    !halt;
+}

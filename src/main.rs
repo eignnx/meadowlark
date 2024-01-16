@@ -46,15 +46,15 @@ where
                 .map(|s| s.to_string())
                 .collect::<Vec<_>>()
                 .join(" or ");
-            println!("Unexpected token [{}:{line}:{col}]:", path.display());
-            println!("\tExpected [{expected}] but found {:?}.", t.1);
+            eprintln!("Unexpected token [{}:{line}:{col}]:", path.display());
+            eprintln!("\tExpected [{expected}] but found {:?}.", t.1);
         }
 
         ParseError::InvalidToken { location } => {
             let (line, col) = line_col(path, src, location);
             let snippet = &src[location..].chars().take(10).collect::<String>();
-            println!("Invalid token [{}:{line}:{col}]", path.display());
-            println!("\tToken begins `{snippet}…`.");
+            eprintln!("Invalid token [{}:{line}:{col}]", path.display());
+            eprintln!("\tToken begins `{snippet}…`.");
         }
 
         ParseError::UnrecognizedEof { location, expected } => {
@@ -64,11 +64,11 @@ where
                 .map(|s| s.to_string())
                 .collect::<Vec<_>>()
                 .join(" or ");
-            println!("Unexpected end of file [{}:{line}:{col}]:", path.display());
-            println!("\tExpected [{expected}].", expected = expected);
+            eprintln!("Unexpected end of file [{}:{line}:{col}]:", path.display());
+            eprintln!("\tExpected [{expected}].", expected = expected);
         }
 
-        other_error => println!(
+        other_error => eprintln!(
             "Parse error:\n~~~~~~~~~~~~~~~{}\n~~~~~~~~~~~~~~\n{:#?}",
             other_error, other_error
         ),
