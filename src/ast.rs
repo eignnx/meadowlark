@@ -16,18 +16,24 @@ pub enum Item {
 
 #[derive(Debug)]
 pub enum AliasBinding {
-    /// Example: `x` (Gets bound to one of `$a0..$a2` if argument, `$t0..$t2` if in fn body)
-    ImpliedAlias(Var),
+    /// Example: `x` (Gets bound to one of `$a0..$a2` if argument).
+    /// Only valid for function arguments. I want users to know which registers
+    /// and stack offsets are in use.
+    ImplicitAlias(Var),
     /// Examples:
     ///    - `local => $s2`
     ///    - `arg => [$sp + 4]`
     ExplicitAlias(Var, LValue),
-    // TODO: Structs
-    // Struct {
-    //     var_name: Var,
-    //     struct_name: String,
-    //     mappings: Vec<(String, LValue)>,
-    // }
+
+    /// Examples:
+    ///     - `my_point => Point { x => $a0, y => $a1 }`
+    ///     - `my_point => { x => [$sp + 4], y => [$sp + 6] }`
+    Struct {
+        var_name: Var,
+        // /// If `Some`, refers to a previously defined struct item.
+        // struct_name: Option<String>,
+        field_bindings: Vec<AliasBinding>,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -53,7 +59,7 @@ pub enum Stmt {
     Instr(Instr),
     Restore,
     /// Example: `alias len => $k0;`
-    DefAlias(Var, LValue),
+    DefAlias(AliasBinding),
     If {
         test_reg: Reg,
         test_cond: Vec<Instr>,

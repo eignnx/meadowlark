@@ -13,5 +13,16 @@ fn main() {
     !li fav_number, 0xAB;
     !sw [0x0001], fav_number;
 
+    alias my_list => {
+        car => $t0;
+        cdr => $t1;
+    };
+
+    !li my_list.car, 0x1234;
+    !sw [0x0001], my_list.car;
+
+    !li my_list.cdr, 0x5678;
+    !sw [0x0001], my_list.cdr;
+
     !halt;
 }

@@ -42,11 +42,6 @@ Item: Item = {
     },
 }
 
-AliasBinding: AliasBinding = {
-    <name: LabelIdent> "=>" <lvalue: LValue> => AliasBinding::ExplicitAlias(name.to_string(), lvalue),
-    <name: LabelIdent> => AliasBinding::ImpliedAlias(name.to_string()),
-};
-
 LValue: LValue = {
     <reg: Reg> => LValue::Reg(reg),
     "[" <reg: Reg> <offset: Signed> "]" => LValue::Mem(reg, offset),
@@ -56,11 +51,20 @@ LValue: LValue = {
 
 Stmt: Stmt = {
     "restore" ";" => Stmt::Restore,
-    "alias" <alias: LabelIdent> "=>" <lvalue: LValue> ";" => Stmt::DefAlias(alias.to_string(), lvalue),
+    "alias" <binding: AliasBinding> ";" => Stmt::DefAlias(binding),
     <instr: Instr> ";" => Stmt::Instr(instr),
     <label: LabelIdent> r":" => Stmt::Label(label.to_string()),
     <if_stmt: IfStmt> => if_stmt,
     <while_loop: WhileLoop> => while_loop,
+};
+
+AliasBinding: AliasBinding = {
+    <name: LabelIdent> "=>" <lvalue: LValue> => AliasBinding::ExplicitAlias(name.to_string(), lvalue),
+    <name: LabelIdent> "=>" "{" <field_bindings: (<AliasBinding> ";")*> "}" => AliasBinding::Struct {
+        var_name: name.to_string(),
+        field_bindings,
+    },
+    <name: LabelIdent> => AliasBinding::ImplicitAlias(name.to_string()),
 };
 
 IfStmt: Stmt = {

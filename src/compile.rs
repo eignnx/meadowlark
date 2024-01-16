@@ -94,8 +94,9 @@ impl CodeGen {
                 fn_name,
                 args.iter()
                     .map(|a| match a {
-                        AliasBinding::ImpliedAlias(v) => v.to_string(),
+                        AliasBinding::ImplicitAlias(v) => v.to_string(),
                         AliasBinding::ExplicitAlias(v, _) => v.to_string(),
+                        AliasBinding::Struct { var_name, .. } => var_name.to_string(), // TODO: recurse
                     })
                     .collect::<Vec<_>>()
                     .join(", ")
@@ -110,30 +111,18 @@ impl CodeGen {
         self.var_aliases.clear();
         let mut available_argument_registers = BTreeSet::from_iter(Reg::argument_registers());
 
-        for arg in args {
-            match arg {
-                // If the user does not assign a register to a variable, try to assign one
-                // automatically.
-                AliasBinding::ImpliedAlias(varname) => {
-                    if let Some(reg) = available_argument_registers.pop_first() {
-                        self.var_aliases.insert(varname.clone(), LValue::Reg(reg));
-                    } else {
-                        self.warn_no_more_arg_regs_available(fn_name, varname);
-                    }
-                }
+        {
+            // This is used to build a qualified name for each variable in case it
+            // belongs to a struct.
+            let mut name_path = vec![];
 
-                // If the user explicitly assigns a register to a variable, we need to check that
-                // the register is available.
-                AliasBinding::ExplicitAlias(varname, lvalue) => {
-                    if let LValue::Reg(Reg::Arg(a)) = lvalue {
-                        let was_available = available_argument_registers.remove(&Reg::Arg(*a));
-                        if was_available {
-                            self.var_aliases.insert(varname.clone(), *lvalue);
-                        } else {
-                            self.warn_register_already_assigned(fn_name, *a);
-                        }
-                    }
-                }
+            for arg in args {
+                self.bind_arg_alias(
+                    arg,
+                    &mut available_argument_registers,
+                    fn_name,
+                    &mut name_path,
+                );
             }
         }
 
@@ -150,6 +139,63 @@ impl CodeGen {
         self.comment(out, "</FnDef>")?;
 
         Ok(())
+    }
+
+    fn bind_arg_alias(
+        &mut self,
+        arg: &AliasBinding,
+        available_argument_registers: &mut BTreeSet<Reg>,
+        fn_name: &String,
+        name_path: &mut Vec<String>,
+    ) {
+        match arg {
+            // If the user does not assign a register to a variable, try to assign one
+            // automatically.
+            AliasBinding::ImplicitAlias(varname) => {
+                if let Some(reg) = available_argument_registers.pop_first() {
+                    name_path.push(varname.clone());
+                    let qualified_name = name_path.join(".");
+                    self.var_aliases.insert(qualified_name, LValue::Reg(reg));
+                    name_path.pop();
+                } else {
+                    self.warn_no_more_arg_regs_available(fn_name, varname);
+                }
+            }
+
+            // If the user explicitly assigns a register to a variable, we need to check that
+            // the register is available.
+            AliasBinding::ExplicitAlias(varname, lvalue) => {
+                if let LValue::Reg(Reg::Arg(a)) = lvalue {
+                    let was_available = available_argument_registers.remove(&Reg::Arg(*a));
+                    if was_available {
+                        name_path.push(varname.clone());
+                        let qualified_name = name_path.join(".");
+                        self.var_aliases.insert(qualified_name, *lvalue);
+                        name_path.pop();
+                    } else {
+                        self.warn_register_already_assigned(fn_name, *a);
+                    }
+                }
+            }
+
+            // If a name is bound to a struct, build new identifiers for each subfield
+            // using the name of the struct as a prefix.
+            AliasBinding::Struct {
+                var_name,
+                field_bindings,
+            } => {
+                for field_binding in field_bindings {
+                    name_path.push(var_name.clone());
+                    self.bind_arg_alias(
+                        field_binding,
+                        available_argument_registers,
+                        fn_name,
+                        name_path,
+                    );
+                    name_path.pop();
+                }
+            }
+        }
     }
 
     fn compile_prelude(
@@ -237,9 +283,9 @@ impl CodeGen {
                 self.comment(out, "</Restore>")?;
             }
 
-            Stmt::DefAlias(varname, lvalue) => {
-                self.comment(out, &format!("<DefAlias {varname} => {lvalue} />"))?;
-                self.var_aliases.insert(varname.clone(), *lvalue);
+            Stmt::DefAlias(binding) => {
+                let mut name_path = vec![];
+                self.bind_fn_local_alias(out, binding, &mut name_path)?;
             }
 
             Stmt::If {
@@ -307,6 +353,46 @@ impl CodeGen {
                 writeln!(out, "\tbt\t{test_reg}, {loop_top}")?;
                 self.comment(out, "</While>")?;
                 writeln!(out)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn bind_fn_local_alias(
+        &mut self,
+        out: &mut dyn fmt::Write,
+        binding: &AliasBinding,
+        name_path: &mut Vec<String>,
+    ) -> fmt::Result {
+        match binding {
+            // Implicit aliases are not allowed for function local variables.
+            AliasBinding::ImplicitAlias(name) => {
+                eprintln!(
+                    "Error [{}#{}]: (at `alias {name} => ...`)",
+                    self.filename(),
+                    self.current_fn_name()
+                );
+                eprintln!("\tImplied aliases are only valid for function arguments.");
+                std::process::exit(1);
+            }
+
+            AliasBinding::ExplicitAlias(varname, lvalue) => {
+                name_path.push(varname.clone());
+                let qualified_name = name_path.join(".");
+                self.comment(out, &format!("<DefAlias {qualified_name} => {lvalue} />"))?;
+                self.var_aliases.insert(qualified_name, *lvalue);
+                name_path.pop();
+            }
+
+            AliasBinding::Struct {
+                var_name,
+                field_bindings,
+            } => {
+                for field_binding in field_bindings {
+                    name_path.push(var_name.clone());
+                    self.bind_fn_local_alias(out, field_binding, name_path)?;
+                    name_path.pop();
+                }
             }
         }
         Ok(())
