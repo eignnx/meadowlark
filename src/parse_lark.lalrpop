@@ -1,16 +1,24 @@
 use lalrpop_util::ParseError;
 
-use crate::ast::{
-    Item,
-    AliasBinding,
-    LValue,
-    Stmt,
-    Instr,
-    Arg,
-    Reg,
+use crate::{
+    UserError,
+    ast::{
+        Item,
+        AliasBinding,
+        LValue,
+        Stmt,
+        Instr,
+        Arg,
+        Reg,
+    }
 };
 
 grammar;
+
+extern {
+    type Error = UserError;
+    type Location = usize;
+}
 
 match {
     r"\s+" => { },
@@ -116,7 +124,7 @@ OpName: String = <op: r"![a-z]+"> => op[1..].to_string();
 Arg: Arg = {
     <reg: Reg> => Arg::Reg(reg),
     <i: ImmOrOffset> => i,
-    <char_content: r"'[^']+'"> =>? Ok(Arg::Char(
+    <l: @L> <char_content: r"'[^']+'"> <r: @R> =>? Ok(Arg::Char(
         match &char_content[1..char_content.len()-1] {
             r"\n" => b'\n',
             r"\t" => b'\t',
@@ -125,11 +133,21 @@ Arg: Arg = {
             r"\\" => b'\\',
             r"\0" => b'\0',
             empty if empty.is_empty() => return Err(
-                ParseError::User { error: "character literal cannot be empty" }
+                ParseError::User {
+                    error: UserError {
+                        msg: "character literal cannot be empty".to_string(),
+                        span: (l, r),
+                    }
+                }
             ),
             text if text.len() == 1 => text.bytes().next().unwrap(),
             text => return Err(
-                ParseError::User { error: "character literal must be a single character" }
+                ParseError::User {
+                    error: UserError {
+                        msg: "character literal must be a single character".to_string(),
+                        span: (l, r),
+                    }
+                }
             ),
         }
     )),

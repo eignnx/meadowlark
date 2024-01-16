@@ -31,10 +31,23 @@ fn main() {
     println!("{out}");
 }
 
-fn display_error<E>(e: ParseError<usize, Token, E>, path: &Path, src: &str)
-where
-    E: std::fmt::Display + std::fmt::Debug,
-{
+#[derive(Debug)]
+pub struct UserError {
+    pub msg: String,
+    pub span: (usize, usize),
+}
+
+impl std::fmt::Display for UserError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "[<unknown>:{}-{}]: {}",
+            self.span.0, self.span.1, self.msg
+        )
+    }
+}
+
+fn display_error(e: ParseError<usize, Token, UserError>, path: &Path, src: &str) {
     match e {
         ParseError::UnrecognizedToken {
             token: (l, t, _r),
@@ -66,6 +79,18 @@ where
                 .join(" or ");
             eprintln!("Unexpected end of file [{}:{line}:{col}]:", path.display());
             eprintln!("\tExpected [{expected}].", expected = expected);
+        }
+
+        ParseError::User {
+            error:
+                UserError {
+                    msg,
+                    span: (begin_idx, _),
+                },
+        } => {
+            let (line, col) = line_col(path, src, begin_idx);
+            eprintln!("Error [{}:{line}:{col}]:", path.display());
+            eprintln!("\t{}", msg);
         }
 
         other_error => eprintln!(
