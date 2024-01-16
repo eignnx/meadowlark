@@ -99,6 +99,11 @@ IfStmt: Stmt = {
 };
 
 WhileLoop: Stmt = {
+    "while" <test_reg: Reg> "do" "{" <body: Stmt*> "}" => Stmt::While {
+        test_reg,
+        test_cond: vec![],
+        body,
+    },
     "while" <test_reg: Reg> "(" <first: Instr> <rest_test_cond: RestTestCond?> ")" "do" "{" <body: Stmt*> "}" => Stmt::While {
         test_reg,
         test_cond: std::iter::once(first).chain(rest_test_cond.into_iter().flatten()).collect(),
@@ -151,6 +156,9 @@ Arg: Arg = {
             ),
         }
     )),
+    <string_literal: r#""[^"]*""#> => {
+        Arg::String(string_literal[1..string_literal.len()-1].to_string())
+    },
     r"@" <label: LabelIdent> => Arg::Label(label.to_string()),
     <var_name: LabelIdent> => Arg::Alias(var_name.to_string()),
 };

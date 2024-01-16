@@ -3,5 +3,17 @@ fn main() {
     !sw [0x0001], $t0;
     !li $t0, '\n';
     !sw [0x0001], $t0;
+
+    alias ptr => $t0;
+    alias byte => $t1;
+
+    !li ptr, "Hello, World!\0";
+    !lbu byte, [ptr-1];
+    while $t1 do {
+        !sb [0x0001], byte;
+        !addi ptr, ptr, 1;
+        !lbu byte, [ptr];
+    }
+
     !halt;
 }

@@ -10,6 +10,7 @@ pub struct CodeGen {
     current_fn: Option<FnInfo>,
     filename: Option<PathBuf>,
     var_aliases: HashMap<Var, LValue>,
+    string_literal_labels: HashMap<String, String>,
 }
 
 impl CodeGen {
@@ -20,6 +21,7 @@ impl CodeGen {
             current_fn: None,
             filename: filename.into(),
             var_aliases: HashMap::new(),
+            string_literal_labels: HashMap::new(),
         }
     }
 
@@ -52,6 +54,14 @@ impl CodeGen {
         for item in &ast {
             self.compile_item(out, item)?;
         }
+
+        // Emit string literals.
+        for (s, lbl) in &self.string_literal_labels {
+            writeln!(out, "{}:", lbl)?;
+            writeln!(out, "\t#d \"{}\"", s)?;
+            writeln!(out)?;
+        }
+
         Ok(())
     }
 
@@ -418,6 +428,10 @@ impl CodeGen {
             Arg::Uint(n) => write!(out, "{}", n),
             Arg::Int(n) => write!(out, "{}", n),
             Arg::Char(c) => write!(out, "{}", c),
+            Arg::String(s) => {
+                let fresh_lbl = self.get_or_insert_string_literal(s);
+                write!(out, "{fresh_lbl}")
+            }
             Arg::Label(name) => write!(out, "{}", name),
             Arg::Reg(reg) => write!(out, "{}", reg),
             Arg::Offset(n, reg) => write!(out, "{}({})", n, reg),
@@ -442,6 +456,20 @@ impl CodeGen {
             }
         }
     }
+
+    fn get_or_insert_string_literal<'a>(&'a mut self, s: &str) -> &'a str {
+        let preview = s
+            .chars()
+            .take(8)
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect::<String>();
+
+        let label_prefix = format!("strlit__QQ{preview}QQ__");
+
+        self.string_literal_labels
+            .entry(s.to_string())
+            .or_insert_with(|| self.label_indexes.fresh(&label_prefix))
+    }
 }
 
 struct FnInfo {
@@ -460,6 +488,7 @@ impl LabelIndexes {
         }
     }
 
+    /// Returns a fresh label with the given prefix.
     fn fresh(&mut self, prefix: &str) -> String {
         // Increments the label index and returns the previous value
         let index = self.indexes.entry(prefix.to_string()).or_insert(0);
