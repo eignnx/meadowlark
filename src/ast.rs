@@ -19,7 +19,7 @@ pub enum FnParam {
     /// Example: `x` (Gets bound to one of `$a0..$a2`)
     ImpliedAlias(Var),
     /// Example: `x => $a2`
-    Alias(Var, LValue),
+    ExplicitAlias(Var, LValue),
     // TODO: Structs
     // Struct {
     //     var_name: Var,

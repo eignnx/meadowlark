@@ -43,7 +43,7 @@ Item: Item = {
 }
 
 FnParam: FnParam = {
-    <name: LabelIdent> "=>" <lvalue: LValue> => FnParam::Alias(name.to_string(), lvalue),
+    <name: LabelIdent> "=>" <lvalue: LValue> => FnParam::ExplicitAlias(name.to_string(), lvalue),
     <name: LabelIdent> => FnParam::ImpliedAlias(name.to_string()),
 };
 

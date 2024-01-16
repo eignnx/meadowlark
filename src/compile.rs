@@ -1,6 +1,6 @@
-use std::collections::{HashMap, BTreeSet};
-use std::path::PathBuf;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt;
+use std::path::PathBuf;
 
 use crate::ast::*;
 
@@ -45,6 +45,10 @@ impl CodeGen {
     }
 
     pub fn compile(&mut self, out: &mut dyn fmt::Write, ast: Vec<Item>) -> std::fmt::Result {
+        writeln!(out, "#include \"lark.customasm\"")?;
+        writeln!(out, "#bank rom")?;
+        writeln!(out)?;
+
         for item in &ast {
             self.compile_item(out, item)?;
         }
@@ -62,102 +66,154 @@ impl CodeGen {
                 args,
                 preserve_regs,
                 body,
-            } => {
-                self.current_fn = Some(FnInfo {
-                    fn_name: name.clone(),
-                    callee_regs_to_save: preserve_regs.clone(),
-                });
-
-                self.comment(
-                    out,
-                    format!(
-                        "<FnDef name={} args=[{}]>",
-                        name,
-                        args.iter()
-                            .map(|a| match a {
-                                FnParam::ImpliedAlias(v) => v.to_string(),
-                                FnParam::Alias(v, _) => v.to_string(),
-                            })
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                    .as_str(),
-                )?;
-                writeln!(out, "{}:", name)?;
-
-                self.var_aliases.clear();
-                let mut available_argument_registers = BTreeSet::from_iter(Reg::argument_registers()); 
-                for arg in args {
-                    match arg {
-                        FnParam::ImpliedAlias(v) => {
-                            let Some(reg) = available_argument_registers.pop_first() else {
-                                eprintln!("Warning [{}#{}]:", self.filename(), name);
-                                eprintln!("\tNo more argument registers available for `{v}`.");
-                                eprintln!();
-                                eprintln!("\thint: Consider assigning variable `{v}` as stack location:");
-                                eprintln!("\t```");
-                                eprintln!("\tfn {}(.., {v} => [$sp-INDEX], ..) {{", self.current_fn_name());
-                                eprintln!("\t```");
-                                std::process::exit(1);
-                            };
-                            self.var_aliases.insert(v.clone(), LValue::Reg(reg));
-                        }
-                        FnParam::Alias(v, lvalue) => {
-                            if let LValue::Reg(Reg::Arg(a)) = lvalue {
-                                if !available_argument_registers.remove(&Reg::Arg(*a)) {
-                                    let prev_use = self.var_aliases.iter().find(|(_, l)| match l {
-                                        LValue::Reg(Reg::Arg(a)) => a == a,
-                                        _ => false,
-                                    }).map(|(v, _)| v).unwrap();
-                                    eprintln!("Warning [{}#{}]:", self.filename(), name);
-                                    eprintln!(
-                                        "\tArgument register `{}` already assigned to argument `{}`.",
-                                        Reg::Arg(*a),
-                                        prev_use,
-                                    );
-                                    continue;
-                                }
-                            }
-                            self.var_aliases.insert(v.clone(), lvalue.clone());
-                        }
-                    }
-                }
-
-                if !preserve_regs.is_empty() {
-                    let reg_list = 
-                            preserve_regs
-                                .iter()
-                                .inspect(|r| if !r.is_callee_saved() {
-                                    eprintln!("Warning [{}#{}]:", self.filename(), name);
-                                    eprintln!("\tRegister `{r}` is not callee saved and usually does not need to be preserved.");
-                                })
-                                .map(|r| r.to_string())
-                                .collect::<Vec<_>>()
-                                .join(", ");
-                    self.comment(
-                        out,
-                        format!(
-                            "<Preserve regs=[{reg_list}]>"
-                        )
-                        .as_str(),
-                    )?;
-                    writeln!(out, "\tsubi\t$sp, $sp, {}", preserve_regs.len() * 2)?;
-                    for (i, reg) in preserve_regs.iter().enumerate() {
-                        let offset = i * 2;
-                        writeln!(out, "\tsw\t{offset}($sp), {reg}")?;
-                    }
-                    self.comment(out, "</Preserve>")?;
-                }
-
-                for stmt in body {
-                    self.compile_stmt(out, stmt)?;
-                }
-                self.comment(out, "</FnDef>")?;
-            }
+            } => self.compile_fn_def(out, name, preserve_regs, args, body)?,
         }
         writeln!(out)?;
         writeln!(out)?;
         Ok(())
+    }
+
+    fn compile_fn_def(
+        &mut self,
+        out: &mut dyn fmt::Write,
+        fn_name: &String,
+        preserve_regs: &Vec<Reg>,
+        args: &Vec<FnParam>,
+        body: &Vec<Stmt>,
+    ) -> fmt::Result {
+        // Save info about the current function so we can use it later.
+        self.current_fn = Some(FnInfo {
+            fn_name: fn_name.clone(),
+            callee_regs_to_save: preserve_regs.clone(),
+        });
+
+        self.comment(
+            out,
+            format!(
+                "<FnDef name={} args=[{}]>",
+                fn_name,
+                args.iter()
+                    .map(|a| match a {
+                        FnParam::ImpliedAlias(v) => v.to_string(),
+                        FnParam::ExplicitAlias(v, _) => v.to_string(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+            .as_str(),
+        )?;
+
+        // Print the label.
+        writeln!(out, "{}:", fn_name)?;
+
+        // Assign argument registers to variables according to the user's choice.
+        self.var_aliases.clear();
+        let mut available_argument_registers = BTreeSet::from_iter(Reg::argument_registers());
+
+        for arg in args {
+            match arg {
+                // If the user does not assign a register to a variable, try to assign one
+                // automatically.
+                FnParam::ImpliedAlias(varname) => {
+                    if let Some(reg) = available_argument_registers.pop_first() {
+                        self.var_aliases.insert(varname.clone(), LValue::Reg(reg));
+                    } else {
+                        self.warn_no_more_arg_regs_available(fn_name, varname);
+                    }
+                }
+
+                // If the user explicitly assigns a register to a variable, we need to check that
+                // the register is available.
+                FnParam::ExplicitAlias(varname, lvalue) => {
+                    if let LValue::Reg(Reg::Arg(a)) = lvalue {
+                        let was_available = available_argument_registers.remove(&Reg::Arg(*a));
+                        if was_available {
+                            self.var_aliases.insert(varname.clone(), *lvalue);
+                        } else {
+                            self.warn_register_already_assigned(fn_name, *a);
+                        }
+                    }
+                }
+            }
+        }
+
+        // We can skip the prelude if there are no registers to preserve.
+        if !preserve_regs.is_empty() {
+            self.compile_prelude(out, preserve_regs, fn_name)?;
+        }
+
+        // Compile the body.
+        for stmt in body {
+            self.compile_stmt(out, stmt)?;
+        }
+
+        self.comment(out, "</FnDef>")?;
+
+        Ok(())
+    }
+
+    fn compile_prelude(
+        &mut self,
+        out: &mut dyn fmt::Write,
+        preserve_regs: &Vec<Reg>,
+        name: &String,
+    ) -> fmt::Result {
+        // Warn if the user is preserving a register that is not
+        // conventionally callee saved.
+        if let Some(r) = preserve_regs.iter().find(|r| !r.is_callee_saved()) {
+            eprintln!("Warning [{}#{}]:", self.filename(), name);
+            eprintln!(
+                "\tRegister `{r}` is not callee saved and usually does not need to be preserved."
+            );
+        }
+
+        self.comment(
+            out,
+            &format!(
+                "<Preserve regs=[{reg_list}]>",
+                reg_list = preserve_regs
+                    .iter()
+                    .map(|r| r.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        )?;
+
+        // Bump the stack pointer to make room for the registers we're about to save.
+        writeln!(out, "\tsubi\t$sp, $sp, {}", preserve_regs.len() * 2)?;
+
+        // Save the registers.
+        for (i, reg) in preserve_regs.iter().enumerate() {
+            writeln!(out, "\tsw\t{offset}($sp), {reg}", offset = i as isize * 2)?;
+        }
+
+        self.comment(out, "</Preserve>")?;
+
+        Ok(())
+    }
+
+    fn warn_no_more_arg_regs_available(&mut self, fn_name: &str, varname: &str) {
+        eprintln!("Warning [{}#{}]:", self.filename(), fn_name);
+        eprintln!("\tNo more argument registers available for variable `{varname}`.");
+        eprintln!();
+        eprintln!("\thint: Consider assigning variable `{varname}` to a stack location:");
+        eprintln!("\t```");
+        eprintln!("\tfn {fn_name}(.., {varname} => [$sp-INDEX], ..) {{");
+        eprintln!("\t```");
+    }
+
+    fn warn_register_already_assigned(&mut self, name: &String, reg_id: u8) {
+        let prev_use = self
+            .var_aliases
+            .iter()
+            .find_map(|(vname, l)| matches!(l, LValue::Reg(Reg::Arg(_))).then(|| vname))
+            .unwrap();
+        eprintln!("Warning [{}#{}]:", self.filename(), name);
+        eprintln!(
+            "\tArgument register `{}` already assigned to argument `{}`.",
+            Reg::Arg(reg_id),
+            prev_use,
+        );
     }
 
     fn compile_stmt(&mut self, out: &mut dyn fmt::Write, stmt: &Stmt) -> std::fmt::Result {
@@ -174,7 +230,7 @@ impl CodeGen {
                     .callee_regs_to_save;
                 self.comment(out, "<Restore>")?;
                 for (i, reg) in regs_to_restore.iter().enumerate() {
-                    let offset = i * 2;
+                    let offset = i as isize * 2;
                     writeln!(out, "\tlw\t{reg}, {offset}($sp)")?;
                 }
                 writeln!(out, "\taddi\t$sp, $sp, {}", regs_to_restore.len() * 2)?;

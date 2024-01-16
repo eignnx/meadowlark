@@ -1,15 +1,22 @@
+fn main() {
+    !li $a0, 10;
+    !jal $ra, @fib;
+    !sw [0x0001], $rv;
+    !halt;
+}
+
 fn fib(n) preserve ($ra, $s0, $s1) {
     if $t0 (
         !li $t1, 2;
         !tlt $t0, $a0, $t1;
     ) do {
-        !mov $rv, $a0;
+        !mv $rv, $a0;
     } else {
-        !mov $s0, $a0;
+        !mv $s0, $a0;
 
         !subi $a0, $s0, 1;
         !jal $ra, @fib;
-        !mov $s1, $rv;
+        !mv $s1, $rv;
 
         !subi $a0, $s0, 2;
         !jal $ra, @fib;

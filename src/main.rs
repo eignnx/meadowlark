@@ -1,12 +1,12 @@
 //! Meadowlark is a language for writing Lark VM programs.
 
 use crate::parse_lark::Token;
-use lalrpop_util::ParseError;
+use lalrpop_util::{lalrpop_mod, ParseError};
 use std::path::{Path, PathBuf};
 
 mod ast;
 mod compile;
-mod parse_lark;
+lalrpop_mod!(pub parse_lark);
 
 fn main() {
     let path = PathBuf::from(std::env::args().nth(1).unwrap());
@@ -28,9 +28,7 @@ fn main() {
     let mut out = String::new();
     let mut codegen = compile::CodeGen::new(path);
     codegen.compile(&mut out, ast).unwrap();
-    println!("`````````````````");
     println!("{out}");
-    println!("`````````````````");
 }
 
 fn display_error<E>(e: ParseError<usize, Token, E>, path: &Path, src: &str)
@@ -42,10 +40,10 @@ where
             token: (l, t, _r),
             expected,
         } => {
-            let (line, col) = line_col(&path, &src, l);
+            let (line, col) = line_col(path, src, l);
             let expected = expected
                 .iter()
-                .map(|s| format!("{}", s))
+                .map(|s| s.to_string())
                 .collect::<Vec<_>>()
                 .join(" or ");
             println!("Unexpected token [{}:{line}:{col}]:", path.display());
@@ -53,17 +51,17 @@ where
         }
 
         ParseError::InvalidToken { location } => {
-            let (line, col) = line_col(&path, &src, location);
+            let (line, col) = line_col(path, src, location);
             let snippet = &src[location..].chars().take(10).collect::<String>();
             println!("Invalid token [{}:{line}:{col}]", path.display());
             println!("\tToken begins `{snippet}…`.");
         }
 
         ParseError::UnrecognizedEof { location, expected } => {
-            let (line, col) = line_col(&path, &src, location);
+            let (line, col) = line_col(path, src, location);
             let expected = expected
                 .iter()
-                .map(|s| format!("{}", s))
+                .map(|s| s.to_string())
                 .collect::<Vec<_>>()
                 .join(" or ");
             println!("Unexpected end of file [{}:{line}:{col}]:", path.display());
