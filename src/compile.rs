@@ -156,12 +156,12 @@ impl CodeGen {
         &mut self,
         out: &mut dyn fmt::Write,
         preserve_regs: &Vec<Reg>,
-        name: &String,
+        fn_name: &String,
     ) -> fmt::Result {
         // Warn if the user is preserving a register that is not
         // conventionally callee saved.
         if let Some(r) = preserve_regs.iter().find(|r| !r.is_callee_saved()) {
-            eprintln!("Warning [{}#{}]:", self.filename(), name);
+            eprintln!("Warning [{}#{}]:", self.filename(), fn_name);
             eprintln!(
                 "\tRegister `{r}` is not callee saved and usually does not need to be preserved."
             );
