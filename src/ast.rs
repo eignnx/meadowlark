@@ -8,17 +8,19 @@ pub enum Item {
     },
     FnDef {
         name: String,
-        args: Vec<FnParam>,
+        args: Vec<AliasBinding>,
         preserve_regs: Vec<Reg>,
         body: Vec<Stmt>,
     },
 }
 
 #[derive(Debug)]
-pub enum FnParam {
-    /// Example: `x` (Gets bound to one of `$a0..$a2`)
+pub enum AliasBinding {
+    /// Example: `x` (Gets bound to one of `$a0..$a2` if argument, `$t0..$t2` if in fn body)
     ImpliedAlias(Var),
-    /// Example: `x => $a2`
+    /// Examples:
+    ///    - `local => $s2`
+    ///    - `arg => [$sp + 4]`
     ExplicitAlias(Var, LValue),
     // TODO: Structs
     // Struct {
@@ -50,6 +52,8 @@ pub enum Stmt {
     Label(String),
     Instr(Instr),
     Restore,
+    /// Example: `alias len => $k0;`
+    DefAlias(Var, LValue),
     If {
         test_reg: Reg,
         test_cond: Vec<Instr>,

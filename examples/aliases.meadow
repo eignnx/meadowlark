@@ -1,0 +1,17 @@
+fn main() {
+    alias x => $t0;
+    alias y => $t1;
+    alias sum => $t2;
+
+    !li x, 1;
+    !li y, 2;
+
+    !add sum, x, y;
+    !sw [0x0001], sum;
+
+    alias fav_number => $t0;
+    !li fav_number, 0xAB;
+    !sw [0x0001], fav_number;
+
+    !halt;
+}

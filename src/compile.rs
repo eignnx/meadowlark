@@ -78,7 +78,7 @@ impl CodeGen {
         out: &mut dyn fmt::Write,
         fn_name: &String,
         preserve_regs: &Vec<Reg>,
-        args: &Vec<FnParam>,
+        args: &Vec<AliasBinding>,
         body: &Vec<Stmt>,
     ) -> fmt::Result {
         // Save info about the current function so we can use it later.
@@ -94,8 +94,8 @@ impl CodeGen {
                 fn_name,
                 args.iter()
                     .map(|a| match a {
-                        FnParam::ImpliedAlias(v) => v.to_string(),
-                        FnParam::ExplicitAlias(v, _) => v.to_string(),
+                        AliasBinding::ImpliedAlias(v) => v.to_string(),
+                        AliasBinding::ExplicitAlias(v, _) => v.to_string(),
                     })
                     .collect::<Vec<_>>()
                     .join(", ")
@@ -114,7 +114,7 @@ impl CodeGen {
             match arg {
                 // If the user does not assign a register to a variable, try to assign one
                 // automatically.
-                FnParam::ImpliedAlias(varname) => {
+                AliasBinding::ImpliedAlias(varname) => {
                     if let Some(reg) = available_argument_registers.pop_first() {
                         self.var_aliases.insert(varname.clone(), LValue::Reg(reg));
                     } else {
@@ -124,7 +124,7 @@ impl CodeGen {
 
                 // If the user explicitly assigns a register to a variable, we need to check that
                 // the register is available.
-                FnParam::ExplicitAlias(varname, lvalue) => {
+                AliasBinding::ExplicitAlias(varname, lvalue) => {
                     if let LValue::Reg(Reg::Arg(a)) = lvalue {
                         let was_available = available_argument_registers.remove(&Reg::Arg(*a));
                         if was_available {
@@ -235,6 +235,11 @@ impl CodeGen {
                 }
                 writeln!(out, "\taddi\t$sp, $sp, {}", regs_to_restore.len() * 2)?;
                 self.comment(out, "</Restore>")?;
+            }
+
+            Stmt::DefAlias(varname, lvalue) => {
+                self.comment(out, &format!("<DefAlias {varname} => {lvalue} />"))?;
+                self.var_aliases.insert(varname.clone(), *lvalue);
             }
 
             Stmt::If {

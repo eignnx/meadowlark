@@ -1,6 +1,6 @@
 use crate::ast::{
     Item,
-    FnParam,
+    AliasBinding,
     LValue,
     Stmt,
     Instr,
@@ -19,7 +19,7 @@ pub Program: Vec<Item> = {
 Item: Item = {
     "def" <name: LabelIdent> ":" "u16" "=" <value: Unsigned> ";" => Item::Const { name, value },
     "fn" <fn_name: LabelIdent> "("
-        <args: (FnParam ("," <FnParam>)*)?>
+        <args: (AliasBinding ("," <AliasBinding>)*)?>
     ")" <save_regs: ("preserve" "("
         <(Reg ("," <Reg>)*)?>
     ")")?> "{" <body: Stmt*> "}" => Item::FnDef {
@@ -42,9 +42,9 @@ Item: Item = {
     },
 }
 
-FnParam: FnParam = {
-    <name: LabelIdent> "=>" <lvalue: LValue> => FnParam::ExplicitAlias(name.to_string(), lvalue),
-    <name: LabelIdent> => FnParam::ImpliedAlias(name.to_string()),
+AliasBinding: AliasBinding = {
+    <name: LabelIdent> "=>" <lvalue: LValue> => AliasBinding::ExplicitAlias(name.to_string(), lvalue),
+    <name: LabelIdent> => AliasBinding::ImpliedAlias(name.to_string()),
 };
 
 LValue: LValue = {
@@ -56,6 +56,7 @@ LValue: LValue = {
 
 Stmt: Stmt = {
     "restore" ";" => Stmt::Restore,
+    "alias" <alias: LabelIdent> "=>" <lvalue: LValue> ";" => Stmt::DefAlias(alias.to_string(), lvalue),
     <instr: Instr> ";" => Stmt::Instr(instr),
     <label: LabelIdent> r":" => Stmt::Label(label.to_string()),
     <if_stmt: IfStmt> => if_stmt,
