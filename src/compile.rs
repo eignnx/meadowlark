@@ -58,7 +58,7 @@ impl CodeGen {
     fn compile_item(&mut self, out: &mut dyn fmt::Write, item: &Item) -> std::fmt::Result {
         match item {
             Item::Const { name, value } => {
-                writeln!(out, "#const {} = {}", name, value)?;
+                writeln!(out, "#const {name} = {value}")?;
             }
 
             Item::FnDef {
