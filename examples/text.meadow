@@ -7,13 +7,22 @@ fn main() {
     alias ptr => $t0;
     alias byte => $t1;
 
-    !li ptr, "Hello, World!\0";
-    !lbu byte, [ptr-1];
+    !li ptr, "Hello, World!\n\0";
+    !lbu byte, [ptr];
     while $t1 do {
         !sb [0x0001], byte;
         !addi ptr, ptr, 1;
         !lbu byte, [ptr];
     }
 
+    !li $a0, "Test exn DEBUG_PUTS";
+    !li $a1, 19;
+    !exn 0x0003;
+
     !halt;
+}
+
+[[addr(2100)]]
+fn blah() {
+    !jr $ra;
 }
