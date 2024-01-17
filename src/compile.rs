@@ -1,5 +1,5 @@
 use std::collections::{BTreeSet, HashMap};
-use std::fmt;
+use std::io;
 use std::path::PathBuf;
 
 use crate::ast::*;
@@ -39,15 +39,15 @@ impl CodeGen {
             .unwrap_or("<unknown-fn>")
     }
 
-    fn comment(&self, out: &mut dyn fmt::Write, comment: &str) -> std::fmt::Result {
+    fn comment(&self, out: &mut dyn io::Write, comment: &str) -> io::Result<()> {
         if self.emit_comments {
             writeln!(out, "; {}", comment)?;
         }
         Ok(())
     }
 
-    pub fn compile(&mut self, out: &mut dyn fmt::Write, ast: Vec<Item>) -> std::fmt::Result {
-        writeln!(out, "#include \"lark.customasm\"")?;
+    pub fn compile(&mut self, out: &mut dyn io::Write, ast: Vec<Item>) -> io::Result<()> {
+        writeln!(out, "#include \"../lark.customasm\"")?;
         writeln!(out, "#bank rom")?;
         writeln!(out)?;
 
@@ -65,7 +65,7 @@ impl CodeGen {
         Ok(())
     }
 
-    fn compile_item(&mut self, out: &mut dyn fmt::Write, item: &Item) -> std::fmt::Result {
+    fn compile_item(&mut self, out: &mut dyn io::Write, item: &Item) -> io::Result<()> {
         match item {
             Item::Const { name, value } => {
                 writeln!(out, "#const {name} = {value}")?;
@@ -94,12 +94,12 @@ impl CodeGen {
 
     fn compile_fn_def(
         &mut self,
-        out: &mut dyn fmt::Write,
+        out: &mut dyn io::Write,
         fn_name: &String,
         preserve_regs: &Vec<Reg>,
         args: &Vec<AliasBinding>,
         body: &Vec<Stmt>,
-    ) -> fmt::Result {
+    ) -> io::Result<()> {
         // Save info about the current function so we can use it later.
         self.current_fn = Some(FnInfo {
             fn_name: fn_name.clone(),
@@ -219,10 +219,10 @@ impl CodeGen {
 
     fn compile_prelude(
         &mut self,
-        out: &mut dyn fmt::Write,
+        out: &mut dyn io::Write,
         preserve_regs: &Vec<Reg>,
         fn_name: &String,
-    ) -> fmt::Result {
+    ) -> io::Result<()> {
         // Warn if the user is preserving a register that is not
         // conventionally callee saved.
         if let Some(r) = preserve_regs.iter().find(|r| !r.is_callee_saved()) {
@@ -281,7 +281,7 @@ impl CodeGen {
         );
     }
 
-    fn compile_stmt(&mut self, out: &mut dyn fmt::Write, stmt: &Stmt) -> std::fmt::Result {
+    fn compile_stmt(&mut self, out: &mut dyn io::Write, stmt: &Stmt) -> io::Result<()> {
         match stmt {
             Stmt::Label(name) => writeln!(out, "{}:", name)?,
 
@@ -379,10 +379,10 @@ impl CodeGen {
 
     fn bind_fn_local_alias(
         &mut self,
-        out: &mut dyn fmt::Write,
+        out: &mut dyn io::Write,
         binding: &AliasBinding,
         name_path: &mut Vec<String>,
-    ) -> fmt::Result {
+    ) -> io::Result<()> {
         match binding {
             // Implicit aliases are not allowed for function local variables.
             AliasBinding::ImplicitAlias(name) => {
@@ -417,7 +417,7 @@ impl CodeGen {
         Ok(())
     }
 
-    fn compile_instr(&mut self, out: &mut dyn fmt::Write, instr: &Instr) -> std::fmt::Result {
+    fn compile_instr(&mut self, out: &mut dyn io::Write, instr: &Instr) -> io::Result<()> {
         write!(out, "\t{}\t", instr.op)?;
         // write the first arg, then comma separate the rest
         let mut args = instr.args.iter();
@@ -432,7 +432,7 @@ impl CodeGen {
         Ok(())
     }
 
-    fn compile_instr_arg(&mut self, out: &mut dyn fmt::Write, arg: &Arg) -> std::fmt::Result {
+    fn compile_instr_arg(&mut self, out: &mut dyn io::Write, arg: &Arg) -> io::Result<()> {
         match arg {
             Arg::Uint(n) => write!(out, "{}", n),
             Arg::Int(n) => write!(out, "{}", n),
