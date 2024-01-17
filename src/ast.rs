@@ -12,6 +12,7 @@ pub enum Item {
         preserve_regs: Vec<Reg>,
         body: Vec<Stmt>,
     },
+    Directive(Directive),
 }
 
 #[derive(Debug)]
@@ -99,8 +100,10 @@ pub enum Arg {
     /// - `[$a0 - 4]`
     /// - `[0xBEEF]`
     Offset(i16, Reg),
-    /// Example: `[some_arg]`
-    AliasIndirection(Var),
+    /// Examples:
+    ///     - `[some_arg]`
+    ///     - `[some_arg + 4]`
+    AliasIndirection(Var, Option<i16>),
     /// Example: `some_arg`
     Alias(Var),
 }
@@ -146,4 +149,11 @@ impl fmt::Display for Reg {
             Reg::Sp => write!(f, "$sp"),
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub enum Directive {
+    /// Tells the assembler to place the following code at the given address.
+    /// Example: `[[addr(0x0E00)]]`
+    Addr(u16),
 }

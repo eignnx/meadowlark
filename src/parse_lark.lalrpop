@@ -10,6 +10,7 @@ use crate::{
         Instr,
         Arg,
         Reg,
+        Directive,
     }
 };
 
@@ -56,6 +57,7 @@ Item: Item = {
 
         body,
     },
+    Directive => Item::Directive(<>),
 }
 
 LValue: LValue = {
@@ -168,7 +170,19 @@ ImmOrOffset: Arg = {
     "[" <reg: Reg> "-" <imm: Unsigned> "]" => Arg::Offset(-(imm as i16), reg),
     "[" <reg: Reg> "]" => Arg::Offset(0, reg),
     "[" <imm: Unsigned> "]" => Arg::Offset(imm as i16, Reg::Zero),
-    "[" <var_name: LabelIdent> "]" => Arg::AliasIndirection(var_name.to_string()),
+    "[" <var_name: LabelIdent> "]" => Arg::AliasIndirection(var_name, None),
+    "[" <var_name: LabelIdent> <offset: Signed> "]" => Arg::AliasIndirection(
+        var_name.to_string(),
+        Some(offset),
+    ),
+    "[" <var_name: LabelIdent> <offset: ("+" <Unsigned>)> "]" => Arg::AliasIndirection(
+        var_name.to_string(),
+        Some(offset as i16),
+    ),
+    "[" <var_name: LabelIdent> <offset: ("-" <Unsigned>)> "]" => Arg::AliasIndirection(
+        var_name.to_string(),
+        Some(-(offset as i16)),
+    ),
     <imm: Integer> => imm,
 };
 
@@ -217,4 +231,8 @@ Reg: Reg = {
             }
         }
     }
+};
+
+Directive: Directive = {
+    "[[addr(" <addr: Unsigned> ")]]" => Directive::Addr(addr),
 };

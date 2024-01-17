@@ -76,10 +76,19 @@ impl CodeGen {
                 args,
                 preserve_regs,
                 body,
-            } => self.compile_fn_def(out, name, preserve_regs, args, body)?,
+            } => {
+                self.compile_fn_def(out, name, preserve_regs, args, body)?;
+            }
+
+            Item::Directive(Directive::Addr(addr)) => {
+                writeln!(out, "#addr {}", addr)?;
+            }
         }
+
+        // Space out the items.
         writeln!(out)?;
         writeln!(out)?;
+
         Ok(())
     }
 
@@ -435,15 +444,20 @@ impl CodeGen {
             Arg::Label(name) => write!(out, "{}", name),
             Arg::Reg(reg) => write!(out, "{}", reg),
             Arg::Offset(n, reg) => write!(out, "{}({})", n, reg),
-            Arg::AliasIndirection(name) => {
+            Arg::AliasIndirection(name, arg_offset) => {
                 let Some(resolved) = self.var_aliases.get(name) else {
                     eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());
                     eprintln!("\tUndefined variable `{}`.", name);
                     std::process::exit(1);
                 };
+
+                let arg_offset = arg_offset.unwrap_or_default();
+
                 match resolved {
-                    LValue::Reg(reg) => write!(out, "0({reg})"),
-                    LValue::Mem(reg, offset) => write!(out, "{offset}({reg})"),
+                    LValue::Reg(reg) => write!(out, "{arg_offset}({reg})"),
+                    LValue::Mem(reg, alias_offset) => {
+                        write!(out, "{offset}({reg})", offset = alias_offset + arg_offset)
+                    }
                 }
             }
             Arg::Alias(name) => {
