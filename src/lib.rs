@@ -5,25 +5,15 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use clap::Parser;
 use lalrpop_util::{lalrpop_mod, ParseError};
 
 use crate::parse_lark::Token;
 
-mod ast;
-mod cli;
-mod compile;
+pub mod ast;
+pub mod compile;
 lalrpop_mod!(pub parse_lark);
 
-fn main() {
-    let opts = cli::CliOpts::parse();
-
-    match opts.cmd {
-        cli::Cmd::Run { src_path, debug } => run(&src_path, debug),
-    }
-}
-
-fn run(path: &Path, debug: bool) {
+pub fn compile(path: &Path, debug: bool) {
     // Read in the source file.
     let src = std::fs::read_to_string(path).unwrap();
 
