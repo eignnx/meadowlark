@@ -1,7 +1,7 @@
 //! Meadowlark is a language for writing Lark VM programs.
 
 use std::{
-    fs, io,
+    fmt, fs, io,
     path::{Path, PathBuf},
 };
 
@@ -13,18 +13,44 @@ pub mod ast;
 pub mod compile;
 lalrpop_mod!(pub parse_lark);
 
-pub fn compile(path: &Path, debug: bool) {
+pub enum CompilationErr {
+    ParseError(String),
+    IoError(io::Error),
+}
+
+impl std::fmt::Display for CompilationErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CompilationErr::ParseError(s) => write!(f, "Parse error: {}", s),
+            CompilationErr::IoError(e) => write!(f, "IO error: {}", e),
+        }
+    }
+}
+
+impl From<io::Error> for CompilationErr {
+    fn from(e: io::Error) -> Self {
+        CompilationErr::IoError(e)
+    }
+}
+
+pub fn compile(path: &Path, debug: bool) -> Result<PathBuf, CompilationErr> {
     // Read in the source file.
-    let src = std::fs::read_to_string(path).unwrap();
+    let src = std::fs::read_to_string(path)?;
 
     // Parse.
     let parser = parse_lark::ProgramParser::new();
-    let ast = parser.parse(&src).unwrap_or_else(|e| {
-        display_error(e, path, &src);
-        std::process::exit(1);
-    });
+    let ast = parser.parse(&src).map_err(|e| {
+        CompilationErr::ParseError(
+            display_error(e, path, &src).expect("fmt::Write should not fail"),
+        )
+    })?;
 
-    let basename = path.file_stem().unwrap();
+    let basename = path.file_stem().ok_or_else(|| {
+        CompilationErr::IoError(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Invalid filename",
+        ))
+    })?;
 
     let asm_path = PathBuf::new()
         .join("target")
@@ -32,9 +58,9 @@ pub fn compile(path: &Path, debug: bool) {
         .with_extension("lark.asm");
 
     {
-        let mut out = io::BufWriter::new(fs::File::create(&asm_path).unwrap());
+        let mut out = io::BufWriter::new(fs::File::create(&asm_path)?);
         let mut codegen = compile::CodeGen::new(Some(path.to_owned()));
-        codegen.compile(&mut out, ast).unwrap();
+        codegen.compile(&mut out, ast)?;
     }
 
     let bin_path = PathBuf::new()
@@ -46,8 +72,7 @@ pub fn compile(path: &Path, debug: bool) {
         .arg(&asm_path)
         .arg("-o")
         .arg(&bin_path)
-        .status()
-        .unwrap();
+        .status()?;
 
     let mut vm_cmd = std::process::Command::new("cargo");
     vm_cmd
@@ -58,7 +83,9 @@ pub fn compile(path: &Path, debug: bool) {
     if debug {
         vm_cmd.arg("--debug");
     }
-    vm_cmd.status().unwrap();
+    vm_cmd.status()?;
+
+    Ok(bin_path)
 }
 
 #[derive(Debug)]
@@ -77,7 +104,13 @@ impl std::fmt::Display for UserError {
     }
 }
 
-pub fn display_error(e: ParseError<usize, Token, UserError>, path: &Path, src: &str) {
+pub fn display_error(
+    e: ParseError<usize, Token, UserError>,
+    path: &Path,
+    src: &str,
+) -> Result<String, fmt::Error> {
+    use fmt::Write;
+    let mut err = String::new();
     match e {
         ParseError::UnrecognizedToken {
             token: (l, t, _r),
@@ -89,15 +122,15 @@ pub fn display_error(e: ParseError<usize, Token, UserError>, path: &Path, src: &
                 .map(|s| s.to_string())
                 .collect::<Vec<_>>()
                 .join(" or ");
-            eprintln!("Unexpected token [{}:{line}:{col}]:", path.display());
-            eprintln!("\tExpected [{expected}] but found {:?}.", t.1);
+            writeln!(err, "Unexpected token [{}:{line}:{col}]:", path.display())?;
+            writeln!(err, "\tExpected [{expected}] but found {:?}.", t.1)?;
         }
 
         ParseError::InvalidToken { location } => {
             let (line, col) = line_col(path, src, location);
             let snippet = &src[location..].chars().take(10).collect::<String>();
-            eprintln!("Invalid token [{}:{line}:{col}]", path.display());
-            eprintln!("\tToken begins `{snippet}…`.");
+            writeln!(err, "Invalid token [{}:{line}:{col}]", path.display())?;
+            writeln!(err, "\tToken begins `{snippet}…`.")?;
         }
 
         ParseError::UnrecognizedEof { location, expected } => {
@@ -107,8 +140,12 @@ pub fn display_error(e: ParseError<usize, Token, UserError>, path: &Path, src: &
                 .map(|s| s.to_string())
                 .collect::<Vec<_>>()
                 .join(" or ");
-            eprintln!("Unexpected end of file [{}:{line}:{col}]:", path.display());
-            eprintln!("\tExpected [{expected}].", expected = expected);
+            writeln!(
+                err,
+                "Unexpected end of file [{}:{line}:{col}]:",
+                path.display()
+            )?;
+            writeln!(err, "\tExpected [{expected}].", expected = expected)?;
         }
 
         ParseError::User {
@@ -119,15 +156,17 @@ pub fn display_error(e: ParseError<usize, Token, UserError>, path: &Path, src: &
                 },
         } => {
             let (line, col) = line_col(path, src, begin_idx);
-            eprintln!("Error [{}:{line}:{col}]:", path.display());
-            eprintln!("\t{}", msg);
+            writeln!(err, "Error [{}:{line}:{col}]:", path.display())?;
+            writeln!(err, "\t{}", msg)?;
         }
 
-        other_error => eprintln!(
+        other_error => writeln!(
+            err,
             "Parse error:\n~~~~~~~~~~~~~~~{}\n~~~~~~~~~~~~~~\n{:#?}",
             other_error, other_error
-        ),
+        )?,
     }
+    Ok(err)
 }
 
 fn line_col(filename: &Path, src: &str, pos: usize) -> (usize, usize) {

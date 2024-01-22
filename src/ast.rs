@@ -68,7 +68,7 @@ pub enum Stmt {
         alternative: Option<Vec<Stmt>>,
     },
     While {
-        test_reg: Reg,
+        test_arg: Arg,
         test_cond: Vec<Instr>,
         body: Vec<Stmt>,
     },

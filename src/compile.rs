@@ -348,7 +348,7 @@ impl CodeGen {
             }
 
             Stmt::While {
-                test_reg,
+                test_arg,
                 test_cond,
                 body,
             } => {
@@ -369,7 +369,21 @@ impl CodeGen {
                     self.compile_instr(out, instr)?;
                 }
                 self.comment(out, "<While.Cond>")?;
-                writeln!(out, "\tbt\t{test_reg}, {loop_top}")?;
+                let test_arg_resolved = match test_arg {
+                    Arg::Reg(reg) => reg,
+                    Arg::Alias(name) => {
+                        let resolved = self
+                            .var_aliases
+                            .get(name)
+                            .expect("Test argument of while loop could not be resolved.");
+                        match resolved {
+                            LValue::Reg(reg) => reg,
+                            _ => panic!("Test argument of while loop is not a register."),
+                        }
+                    }
+                    _ => panic!("Test argument of while loop is not a register."),
+                };
+                writeln!(out, "\tbt\t{test_arg_resolved}, {loop_top}")?;
                 self.comment(out, "</While>")?;
                 writeln!(out)?;
             }

@@ -1,4 +1,4 @@
-fn main() {
+fn main() preserve ($s0) {
     !li $t0, 'X'; # comments?
     !sw [0x0001], $t0;
     !li $t0, '\n';
@@ -9,7 +9,7 @@ fn main() {
 
     !li ptr, "Hello, World!\n\0";
     !lbu byte, [ptr];
-    while $t1 do {
+    while byte do {
         !sb [0x0001], byte;
         !addi ptr, ptr, 1;
         !lbu byte, [ptr];
@@ -19,10 +19,30 @@ fn main() {
     !li $a1, 19;
     !exn 0x0003;
 
+
+    ######################
+    alias i => $t0;
+    !li i, 0;
+
+    alias ptr => $t1;
+    !li ptr, "[Video mem test]\0";
+
+    alias byte => $t2;
+
+    while byte (
+        !add $s0, ptr, i;
+        !lbu byte, [$s0];
+    ) do {
+        !exn 1; # breakpoint
+        !sb [i + 128], byte;
+        !addi i, i, 1;
+    }
+    ##################### 
+
+    restore;
     !halt;
 }
 
-[[addr(2100)]]
 fn blah() {
     !jr $ra;
 }

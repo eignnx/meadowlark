@@ -101,13 +101,13 @@ IfStmt: Stmt = {
 };
 
 WhileLoop: Stmt = {
-    "while" <test_reg: Reg> "do" "{" <body: Stmt*> "}" => Stmt::While {
-        test_reg,
+    "while" <test_arg: Arg> "do" "{" <body: Stmt*> "}" => Stmt::While {
+        test_arg,
         test_cond: vec![],
         body,
     },
-    "while" <test_reg: Reg> "(" <first: Instr> <rest_test_cond: RestTestCond?> ")" "do" "{" <body: Stmt*> "}" => Stmt::While {
-        test_reg,
+    "while" <test_arg: Arg> "(" <first: Instr> <rest_test_cond: RestTestCond?> ")" "do" "{" <body: Stmt*> "}" => Stmt::While {
+        test_arg,
         test_cond: std::iter::once(first).chain(rest_test_cond.into_iter().flatten()).collect(),
         body,
     },
