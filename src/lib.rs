@@ -16,6 +16,7 @@ lalrpop_mod!(pub parse_lark);
 pub enum CompilationErr {
     ParseError(String),
     IoError(io::Error),
+    AssemblerError(String),
 }
 
 impl std::fmt::Display for CompilationErr {
@@ -23,6 +24,7 @@ impl std::fmt::Display for CompilationErr {
         match self {
             CompilationErr::ParseError(s) => write!(f, "Parse error: {}", s),
             CompilationErr::IoError(e) => write!(f, "IO error: {}", e),
+            CompilationErr::AssemblerError(s) => write!(f, "Assembler error: {}", s),
         }
     }
 }
@@ -68,22 +70,17 @@ pub fn compile(path: &Path, debug: bool) -> Result<PathBuf, CompilationErr> {
         .join(basename)
         .with_extension("lark.bin");
 
-    std::process::Command::new("customasm")
+    let output = std::process::Command::new("customasm")
         .arg(&asm_path)
         .arg("-o")
         .arg(&bin_path)
-        .status()?;
+        .output()?;
 
-    let mut vm_cmd = std::process::Command::new("cargo");
-    vm_cmd
-        .arg("run")
-        .args(["--package", "lark-vm"])
-        .arg(&bin_path);
-
-    if debug {
-        vm_cmd.arg("--debug");
+    if !output.status.success() {
+        return Err(CompilationErr::AssemblerError(
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ));
     }
-    vm_cmd.status()?;
 
     Ok(bin_path)
 }
