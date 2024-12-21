@@ -1,0 +1,7 @@
+fn main() {
+    alias vtty => $t0;
+
+    !li vtty, 0x0080;
+    !sw [vtty], 65;
+    !halt
+}
