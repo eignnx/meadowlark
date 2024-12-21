@@ -1,7 +1,9 @@
-fn main() {
+fn main() preserve ($s0) {
     alias vtty => $t0;
 
     !li vtty, 0x0080;
-    !sw [vtty], 65;
-    !halt
+    !li $t1, 65;
+    !sw [vtty], $t1;
+    restore;
+    !halt;
 }

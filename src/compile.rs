@@ -457,7 +457,7 @@ impl CodeGen {
             }
             Arg::Label(name) => write!(out, "{}", name),
             Arg::Reg(reg) => write!(out, "{}", reg),
-            Arg::Offset(n, reg) => write!(out, "{}({})", n, reg),
+            Arg::Offset(n, reg) => write!(out, "{:+}({})", n, reg),
             Arg::AliasIndirection(name, arg_offset) => {
                 let Some(resolved) = self.var_aliases.get(name) else {
                     eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());

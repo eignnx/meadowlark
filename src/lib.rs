@@ -10,6 +10,7 @@ use lalrpop_util::{lalrpop_mod, ParseError};
 use crate::parse_lark::Token;
 
 pub mod ast;
+pub mod cli;
 pub mod compile;
 lalrpop_mod!(pub parse_lark);
 
