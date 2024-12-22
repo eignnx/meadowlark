@@ -33,7 +33,7 @@ fn main() preserve ($s0) {
         !add $s0, ptr, i;
         !lbu byte, [$s0];
     ) do {
-        !exn 1; # breakpoint
+        # !exn 1; # breakpoint
         !sb [i + 128], byte;
         !addi i, i, 1;
     }

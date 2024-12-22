@@ -10,6 +10,7 @@ pub struct CodeGen {
     current_fn: Option<FnInfo>,
     filename: Option<PathBuf>,
     var_aliases: HashMap<Var, LValue>,
+    consts: BTreeSet<Var>,
     string_literal_labels: HashMap<String, String>,
 }
 
@@ -21,6 +22,7 @@ impl CodeGen {
             current_fn: None,
             filename: filename.into(),
             var_aliases: HashMap::new(),
+            consts: BTreeSet::new(),
             string_literal_labels: HashMap::new(),
         }
     }
@@ -68,6 +70,7 @@ impl CodeGen {
     fn compile_item(&mut self, out: &mut dyn io::Write, item: &Item) -> io::Result<()> {
         match item {
             Item::Const { name, value } => {
+                self.consts.insert(name.clone());
                 writeln!(out, "#const {name} = {value}")?;
             }
 
@@ -475,12 +478,16 @@ impl CodeGen {
                 }
             }
             Arg::Alias(name) => {
-                let Some(resolved) = self.var_aliases.get(name) else {
+                if let Some(resolved) = self.var_aliases.get(name) {
+                    write!(out, "{resolved}")
+                } else if self.consts.contains(name) {
+                    // `customasm` will handle interpolating this constant later.
+                    write!(out, "{name}")
+                } else {
                     eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());
                     eprintln!("\tUndefined variable `{}`.", name);
                     std::process::exit(1);
-                };
-                write!(out, "{}", resolved)
+                }
             }
         }
     }

@@ -1,9 +1,12 @@
+def VTTY: u16 = 0x0080;
+
 fn main() preserve ($s0) {
     alias vtty => $t0;
 
-    !li vtty, 0x0080;
+    !li vtty, VTTY;
     !li $t1, 65;
     !sw [vtty], $t1;
     restore;
     !halt;
+    !li $t0, "asdfasfd";
 }
