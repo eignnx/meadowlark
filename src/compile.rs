@@ -187,17 +187,26 @@ impl CodeGen {
             // If the user explicitly assigns a register to a variable, we need to check that
             // the register is available.
             AliasBinding::ExplicitAlias(varname, lvalue) => {
-                if let LValue::Reg(Reg::Arg(a)) = lvalue {
-                    let was_available = available_argument_registers.remove(&Reg::Arg(*a));
-                    if was_available {
-                        name_path.push(varname.clone());
-                        let qualified_name = name_path.join(".");
+                name_path.push(varname.clone());
+                let qualified_name = name_path.join(".");
+
+                match lvalue {
+                    LValue::Reg(Reg::Arg(a)) => {
+                        let was_available = available_argument_registers.remove(&Reg::Arg(*a));
+                        if was_available {
+                            self.var_aliases.insert(qualified_name, *lvalue);
+                        } else {
+                            self.warn_register_already_assigned(fn_name, *a);
+                        }
+                    }
+                    LValue::Mem(..) | LValue::Reg(..) => {
+                        // TODO: check liveness of the specific memory address?
+                        // For example: "Warn: [$sp-4] is already aliased by another var `blah`."
                         self.var_aliases.insert(qualified_name, *lvalue);
-                        name_path.pop();
-                    } else {
-                        self.warn_register_already_assigned(fn_name, *a);
                     }
                 }
+
+                name_path.pop();
             }
 
             // If a name is bound to a struct, build new identifiers for each subfield
@@ -296,13 +305,23 @@ impl CodeGen {
                     .as_ref()
                     .expect("current function set")
                     .callee_regs_to_save;
-                self.comment(out, "<Restore>")?;
-                for (i, reg) in regs_to_restore.iter().enumerate() {
-                    let offset = i as isize * 2;
-                    writeln!(out, "\tlw\t{reg}, {offset}($sp)")?;
+                if !regs_to_restore.is_empty() {
+                    self.comment(out, "<Restore>")?;
+                    for (i, reg) in regs_to_restore.iter().enumerate() {
+                        let offset = i as isize * 2;
+                        writeln!(out, "\tlw\t{reg}, {offset}($sp)")?;
+                    }
+                    writeln!(out, "\taddi\t$sp, $sp, {}", regs_to_restore.len() * 2)?;
+                    self.comment(out, "</Restore>")?;
+                } else {
+                    eprintln!(
+                        "Warning [{}#{}#restore]:",
+                        self.filename(),
+                        self.current_fn_name()
+                    );
+                    eprintln!("\tUnnecessary `restore` statement.");
+                    eprintln!("hint: Since no reigisters were `preserve`ed in the function declaration, this `restore` statement does nothing.")
                 }
-                writeln!(out, "\taddi\t$sp, $sp, {}", regs_to_restore.len() * 2)?;
-                self.comment(out, "</Restore>")?;
             }
 
             Stmt::DefAlias(binding) => {
@@ -460,7 +479,7 @@ impl CodeGen {
             }
             Arg::Label(name) => write!(out, "{}", name),
             Arg::Reg(reg) => write!(out, "{}", reg),
-            Arg::Offset(n, reg) => write!(out, "{:+}({})", n, reg),
+            Arg::Offset(n, reg) => write!(out, "{n}({reg})"),
             Arg::AliasIndirection(name, arg_offset) => {
                 let Some(resolved) = self.var_aliases.get(name) else {
                     eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());

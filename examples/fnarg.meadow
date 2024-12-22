@@ -1,11 +1,28 @@
-fn main(argv, argc => $a1, extra, too_many, blah => [$sp-2]) {
-    !lw $t0, [argv];
-    !lw $t1, blah;
-    !sw [0x0001], $t0;
-    !sw [0x0001], argc;
+# fn main(argv, argc => $a1, extra, too_many, blah => [$sp-2]) {
+#     !lw $t0, [argv];
+#     !lw $t1, blah;
+#     !sw [0x0001], $t0;
+#     !sw [0x0001], argc;
 
-    !sw [0x0001], extra;
-    !sw [0x0001], too_many;
+#     !sw [0x0001], extra;
+#     !sw [0x0001], too_many;
 
+#     !jr $ra;
+# }
+
+fn create_user(
+    emplacement,
+    name_ptr,
+    name_len,
+    age => [$sp-0],
+    id => [$sp-2]
+) {
+    !li $t0, 0x0080;
+    !sw [$t0], emplacement;
+    !sw [$t0], name_ptr;
+    !sw [$t0], name_len;
+    !lw $t1, age;
+    !lw $t2, id;
+    restore;
     !jr $ra;
 }
