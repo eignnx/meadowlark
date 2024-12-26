@@ -156,4 +156,8 @@ pub enum Directive {
     /// Tells the assembler to place the following code at the given address.
     /// Example: `[[addr(0x0E00)]]`
     Addr(u16),
+
+    /// Tells the assembler to emit the given data bytes.
+    /// Example: `[[data(0xe4, 0x99, 0xaf)]]`
+    Data(Vec<u8>),
 }

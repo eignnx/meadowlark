@@ -235,4 +235,19 @@ Reg: Reg = {
 
 Directive: Directive = {
     "[[addr(" <addr: Unsigned> ")]]" => Directive::Addr(addr),
+    "[[data(" <l:@L> <first: Unsigned> <r:@R> <rest: ("," <@L> <Unsigned> <@R>)*> ")]]" =>? {
+        let mut data = vec![];
+        for (l, d, r) in [(l, first, r)].into_iter().chain(rest.into_iter()) {
+            match u8::try_from(d) {
+                Ok(d) => data.push(d),
+                Err(e) => return Err(ParseError::User {
+                    error: UserError {
+                        msg: "Data element must be a `u8`.".to_string(),
+                        span: (l, r),
+                    }
+                }),
+            }
+        }
+        Ok(Directive::Data(data))
+    },
 };

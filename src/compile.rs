@@ -86,6 +86,17 @@ impl CodeGen {
             Item::Directive(Directive::Addr(addr)) => {
                 writeln!(out, "#addr {}", addr)?;
             }
+
+            Item::Directive(Directive::Data(data)) => {
+                write!(out, "#d ")?;
+                for (i, d) in data.iter().enumerate() {
+                    if i != 0 {
+                        write!(out, ", ")?;
+                    }
+                    write!(out, "{d}")?;
+                }
+                writeln!(out)?;
+            }
         }
 
         // Space out the items.
@@ -481,19 +492,22 @@ impl CodeGen {
             Arg::Reg(reg) => write!(out, "{}", reg),
             Arg::Offset(n, reg) => write!(out, "{n}({reg})"),
             Arg::AliasIndirection(name, arg_offset) => {
-                let Some(resolved) = self.var_aliases.get(name) else {
+                if let Some(resolved) = self.var_aliases.get(name) {
+                    let arg_offset = arg_offset.unwrap_or_default();
+
+                    match resolved {
+                        LValue::Reg(reg) => write!(out, "{arg_offset}({reg})"),
+                        LValue::Mem(reg, alias_offset) => {
+                            write!(out, "{offset}({reg})", offset = alias_offset + arg_offset)
+                        }
+                    }
+                } else if self.consts.contains(name) {
+                    let arg_offset = arg_offset.unwrap_or_default();
+                    write!(out, "{offset}({name})", offset = arg_offset)
+                } else {
                     eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());
                     eprintln!("\tUndefined variable `{}`.", name);
                     std::process::exit(1);
-                };
-
-                let arg_offset = arg_offset.unwrap_or_default();
-
-                match resolved {
-                    LValue::Reg(reg) => write!(out, "{arg_offset}({reg})"),
-                    LValue::Mem(reg, alias_offset) => {
-                        write!(out, "{offset}({reg})", offset = alias_offset + arg_offset)
-                    }
                 }
             }
             Arg::Alias(name) => {
