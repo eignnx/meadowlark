@@ -208,6 +208,10 @@ Unsigned: u16 = {
         let n = &n[2..].to_ascii_lowercase();
         return u16::from_str_radix(n, 16).expect("parse hexadecimal number");
     },
+    <n: r"0o[01234567]+"> => {
+        let n = &n[2..];
+        return u16::from_str_radix(n, 8).expect("parse octal number");
+    },
     <n: r"0b[01]+"> => {
         let n = &n[2..];
         return u16::from_str_radix(n, 2).expect("parse binary number");
