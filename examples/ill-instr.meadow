@@ -1,0 +1,47 @@
+fn _start() {
+    !jal $ra, @boot;
+    !j @main;
+}
+
+def slot__ILL_INSTR: u16 = 0xFFFE;
+
+fn boot() {
+    alias vec_slot => $t0;
+    alias fn_ptr => $t1;
+
+    # Setup ILL_INSTR handler:
+    !li vec_slot, slot__ILL_INSTR; # Slot in interrupt vector
+    !li fn_ptr, @handle__ILL_INSTR; # Function pointer of handler
+    !sw [vec_slot], fn_ptr;
+    !jr $ra;
+}
+
+def PUTS: u16 = 3;
+
+fn main() {
+    !li $a0, ">>> Within main";
+    !li $a1, 15;
+    !exn PUTS;
+
+    !exn 0; # Illegal instruction!
+
+    !halt;
+}
+
+fn handle__ILL_INSTR() {
+    #region preserve
+    !mv $k0, $a0;
+    !mv $k1, $a1;
+    #endregion
+
+    !li $a0, ">>> Within handler";
+    !li $a1, 18;
+    !exn PUTS;
+
+    #region restore
+    !mv $a0, $k0;
+    !mv $a1, $k1;
+    #endregion
+
+    !kret;
+}

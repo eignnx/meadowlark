@@ -36,7 +36,7 @@ impl From<io::Error> for CompilationErr {
     }
 }
 
-pub fn compile(path: &Path, debug: bool) -> Result<PathBuf, CompilationErr> {
+pub fn compile(path: &Path, _debug: bool) -> Result<PathBuf, CompilationErr> {
     // Read in the source file.
     let src = std::fs::read_to_string(path)?;
 

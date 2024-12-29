@@ -116,7 +116,11 @@ impl CodeGen {
                             }
                         }
                         Arg::Uint(u) => write!(out, "{u}")?,
-                        other => panic!(),
+                        other => {
+                            eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());
+                            eprintln!("\tA `[[data(..)]]` directive may only contain constants. Received: `{other:?}`");
+                            std::process::exit(1);
+                        }
                     }
                 }
                 writeln!(out)?;
