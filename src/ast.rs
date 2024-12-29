@@ -172,6 +172,6 @@ pub enum Directive {
     Addr(u16),
 
     /// Tells the assembler to emit the given data bytes.
-    /// Example: `[[data(0xe4, 0x99, 0xaf)]]`
-    Data(Vec<u8>),
+    /// Example: `[[data(0xe4, VTTY_ADDR, 0xaf)]]`
+    Data(Vec<Arg>),
 }

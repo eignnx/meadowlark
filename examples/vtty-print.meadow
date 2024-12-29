@@ -12,4 +12,5 @@ fn main() preserve ($s0) {
     !li $t0, "asdfasfd";
 }
 
-[[data(12, 34, 56)]]
+[[addr(0x1003)]]
+[[data(12, VTTY, 56)]]

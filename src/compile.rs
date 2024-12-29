@@ -88,19 +88,42 @@ impl CodeGen {
             }
 
             Item::Directive(Directive::Data(data)) => {
-                write!(out, "#d ")?;
+                write!(out, "#d8 ")?;
                 for (i, d) in data.iter().enumerate() {
                     if i != 0 {
                         write!(out, ", ")?;
                     }
-                    write!(out, "{d}")?;
+                    match d {
+                        Arg::Alias(name) => {
+                            if self.consts.contains(name) {
+                                write!(out, "{name}")?;
+                            } else if self.var_aliases.contains_key(name) {
+                                eprintln!(
+                                    "Error [{}#{}]:",
+                                    self.filename(),
+                                    self.current_fn_name()
+                                );
+                                eprintln!("\tA variable reference in a `[[data(..)]]` directive cannot refer to a runtime value. It must be const. `{name}`.");
+                                std::process::exit(1);
+                            } else {
+                                eprintln!(
+                                    "Error [{}#{}]:",
+                                    self.filename(),
+                                    self.current_fn_name()
+                                );
+                                eprintln!("\tUnbound variable: `{name}`");
+                                std::process::exit(1);
+                            }
+                        }
+                        Arg::Uint(u) => write!(out, "{u}")?,
+                        other => panic!(),
+                    }
                 }
                 writeln!(out)?;
             }
         }
 
         // Space out the items.
-        writeln!(out)?;
         writeln!(out)?;
 
         Ok(())
