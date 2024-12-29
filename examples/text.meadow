@@ -1,8 +1,11 @@
+def INTEGER_OUT: u16 = 0x0001;
+def VTTY: u16 = 0x0080;
+
 fn main() preserve ($s0) {
     !li $t0, 'X'; # comments?
-    !sw [0x0001], $t0;
+    !sw [INTEGER_OUT], $t0;
     !li $t0, '\n';
-    !sw [0x0001], $t0;
+    !sw [INTEGER_OUT], $t0;
 
     alias ptr => $t0;
     alias byte => $t1;
@@ -10,7 +13,7 @@ fn main() preserve ($s0) {
     !li ptr, "Hello, World!\n\0";
     !lbu byte, [ptr];
     while byte do {
-        !sb [0x0001], byte;
+        !sb [INTEGER_OUT], byte;
         !addi ptr, ptr, 1;
         !lbu byte, [ptr];
     }
@@ -34,15 +37,20 @@ fn main() preserve ($s0) {
         !lbu byte, [$s0];
     ) do {
         # !exn 1; # breakpoint
-        !sb [i + 128], byte;
+        # !sb [i + VTTY], byte;
         !addi i, i, 1;
     }
+    ##################### 
+
+    ##################### 
+    !exn 0; # Illegal instruction
     ##################### 
 
     restore;
     !halt;
 }
 
-fn blah() {
-    !jr $ra;
-}
+def ILL_INSTR: u16 = 0xFFFF;
+
+[[addr(0xFFFF)]]
+[[data(0x11, 0x22)]]

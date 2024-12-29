@@ -80,7 +80,7 @@ pub struct Instr {
     pub args: Vec<Arg>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Arg {
     /// Example: `0xBEEF`
     Uint(u16),
@@ -94,6 +94,20 @@ pub enum Arg {
     Label(String),
     /// Example: `$t0`, `$rv`
     Reg(Reg),
+
+    /// Examples:
+    ///     - `[$a0]`
+    ///     - `[$a0 + 4]`
+    ///     - `[$a0 - 4]`
+    ///     - `[0xBEEF]`
+    ///     - `[some_arg]`
+    ///     - `[some_arg + 4]`
+    INDIRECTION {
+        base: Box<Arg>,
+        offset: Option<Box<Arg>>,
+        offset_negated: bool,
+    },
+
     /// Examples:
     /// - `[$a0]`
     /// - `[$a0 + 4]`

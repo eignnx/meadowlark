@@ -5,8 +5,11 @@ fn main() preserve ($s0) {
 
     !li vtty, VTTY;
     !li $t1, 65;
-    !sw [vtty], $t1;
+    !sw [VTTY], $t1;
+    !sw [$t1-123], $t1;
     restore;
     !halt;
     !li $t0, "asdfasfd";
 }
+
+[[data(12, 34, 56)]]

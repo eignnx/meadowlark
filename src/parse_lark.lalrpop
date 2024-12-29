@@ -166,24 +166,36 @@ Arg: Arg = {
 };
 
 ImmOrOffset: Arg = {
-    "[" <reg: Reg> "+" <imm: Unsigned> "]" => Arg::Offset(imm as i16, reg),
-    "[" <reg: Reg> "-" <imm: Unsigned> "]" => Arg::Offset(-(imm as i16), reg),
-    "[" <reg: Reg> "]" => Arg::Offset(0, reg),
-    "[" <imm: Unsigned> "]" => Arg::Offset(imm as i16, Reg::Zero),
-    "[" <var_name: LabelIdent> "]" => Arg::AliasIndirection(var_name, None),
-    "[" <var_name: LabelIdent> <offset: Signed> "]" => Arg::AliasIndirection(
-        var_name.to_string(),
-        Some(offset),
-    ),
-    "[" <var_name: LabelIdent> <offset: ("+" <Unsigned>)> "]" => Arg::AliasIndirection(
-        var_name.to_string(),
-        Some(offset as i16),
-    ),
-    "[" <var_name: LabelIdent> <offset: ("-" <Unsigned>)> "]" => Arg::AliasIndirection(
-        var_name.to_string(),
-        Some(-(offset as i16)),
-    ),
+    "[" <base: Arg> "]" => Arg::INDIRECTION {
+        base: Box::new(base),
+        offset: None,
+        offset_negated: false,
+    },
+    "[" <base: Arg> <offset: Signed> "]" => {
+        let offset_negated = offset < 0;
+        Arg::INDIRECTION {
+            base: Box::new(base),
+            offset: Some(Box::new(Arg::Uint(offset.abs() as u16))),
+            offset_negated,
+        }
+    },
+    "[" <base: Arg> "+" <offset: LabelIdent> "]" => Arg::INDIRECTION {
+        base: Box::new(base),
+        offset: Some(Box::new(Arg::Alias(offset))),
+        offset_negated: false,
+    },
+    "[" <base: Arg> "-" <offset: LabelIdent> "]" => Arg::INDIRECTION {
+        base: Box::new(base),
+        offset: Some(Box::new(Arg::Alias(offset))),
+        offset_negated: true,
+    },
+
     <imm: Integer> => imm,
+};
+
+UintOrConst: Arg = {
+    <uint: Unsigned> => Arg::Uint(uint),
+    <const_name: LabelIdent> => Arg::Alias(const_name),
 };
 
 Integer: Arg = {
@@ -197,7 +209,7 @@ Unsigned: u16 = {
         return u16::from_str_radix(n, 16).expect("parse hexadecimal number");
     },
     <n: r"0b[01]+"> => {
-        let n = &n[2..].to_ascii_lowercase();
+        let n = &n[2..];
         return u16::from_str_radix(n, 2).expect("parse binary number");
     },
     <n: r"[0-9]+"> => n.parse().unwrap(),

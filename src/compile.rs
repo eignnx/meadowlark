@@ -490,6 +490,70 @@ impl CodeGen {
             }
             Arg::Label(name) => write!(out, "{}", name),
             Arg::Reg(reg) => write!(out, "{}", reg),
+
+            Arg::INDIRECTION {
+                base,
+                offset,
+                offset_negated,
+            } => {
+                let offset = if let Some(offset) = offset {
+                    Arg::clone(&**offset)
+                } else {
+                    Arg::Uint(0)
+                };
+
+                let offset: String = match offset {
+                    Arg::Uint(x) => {
+                        if *offset_negated {
+                            format!("{}", -(x as i64))
+                        } else {
+                            format!("{}", x as i64)
+                        }
+                    }
+                    Arg::Alias(name) => {
+                        // It MUST be a constant.
+                        if self.consts.contains(&name) {
+                            if *offset_negated {
+                                format!("-{name}")
+                            } else {
+                                format!("{name}")
+                            }
+                        } else {
+                            eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());
+                            eprintln!("\tA variable reference in second position cannot refer to a runtime value. It must be const. `{name}`.");
+                            std::process::exit(1);
+                        }
+                    }
+                    other => {
+                        eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());
+                        eprintln!("\tThe offset in an indirection expression must be a const or an integer. Received `{other:?}`.");
+                        std::process::exit(1);
+                    }
+                };
+
+                match base.as_ref() {
+                    Arg::Alias(name) => {
+                        if let Some(resolved) = self.var_aliases.get(name) {
+                            write!(out, "{offset}({resolved})")
+                        } else if self.consts.contains(name) {
+                            // `customasm` will handle interpolating this constant later.
+                            write!(out, "({offset}+{name})($zero)")
+                        } else {
+                            eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());
+                            eprintln!("\tUndefined variable `{}`.", name);
+                            std::process::exit(1);
+                        }
+                    }
+                    Arg::Uint(addr) => write!(out, "({offset}+{addr})($zero)"),
+                    Arg::Reg(reg) => write!(out, "{offset}({reg})"),
+                    other => {
+                        eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());
+                        eprintln!("\tThe base in an indirection expression must be an alias or an integer. Received `{other:?}`.");
+                        std::process::exit(1);
+                    }
+                }
+            }
+
             Arg::Offset(n, reg) => write!(out, "{n}({reg})"),
             Arg::AliasIndirection(name, arg_offset) => {
                 if let Some(resolved) = self.var_aliases.get(name) {
