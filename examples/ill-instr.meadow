@@ -19,8 +19,8 @@ fn boot() {
 def PUTS: u16 = 3;
 
 fn main() {
-    !li $a0, ">>> Within main";
-    !li $a1, 15;
+    !li $a0, "Within main";
+    !li $a1, 0o17; # deecimal 15
     !exn PUTS;
 
     !exn 0; # Illegal instruction!
@@ -28,20 +28,10 @@ fn main() {
     !halt;
 }
 
-fn handle__ILL_INSTR() {
-    #region preserve
-    !mv $k0, $a0;
-    !mv $k1, $a1;
-    #endregion
-
-    !li $a0, ">>> Within handler";
+fn handle__ILL_INSTR() preserve ($a0, $a1) {
+    !li $a0, "Within handler";
     !li $a1, 18;
     !exn PUTS;
-
-    #region restore
-    !mv $a0, $k0;
-    !mv $a1, $k1;
-    #endregion
-
+    restore;
     !kret;
 }
