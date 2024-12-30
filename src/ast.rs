@@ -31,23 +31,80 @@ pub enum AliasBinding {
     ///     - `my_point => { x => [$sp + 4], y => [$sp + 6] }`
     Struct {
         var_name: Var,
-        // /// If `Some`, refers to a previously defined struct item.
-        // struct_name: Option<String>,
+        /// If `Some`, refers to a previously defined struct item.
+        /// struct_name: Option<String>,
         field_bindings: Vec<AliasBinding>,
     },
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum LValue {
+#[derive(Debug, Clone)]
+pub enum Base {
     Reg(Reg),
-    Mem(Reg, i16),
+    AliasOrConst(Var),
+}
+
+impl fmt::Display for Offset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Offset::I10(i) => write!(f, "{}", i),
+            Offset::Const(var) => write!(f, "+{}", var),
+            Offset::NegatedConst(var) => write!(f, "-{}", var),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Offset {
+    I10(i16),
+    Const(Var),
+    NegatedConst(Var),
+}
+
+impl fmt::Display for Base {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Base::Reg(reg) => write!(f, "{}", reg),
+            Base::AliasOrConst(var) => write!(f, "{}", var),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum LValue {
+    /// Example: `$t0`, `$rv`
+    Reg(Reg),
+
+    /// # Examples
+    ///
+    /// | Syntax                | Equivalent          |
+    /// |:----------------------|--------------------:|
+    /// | `[$a0]`               | `0($a0)`            |
+    /// | `[0xBEEF]`            | `0xBEEF($zero)`     |
+    /// | `[some_alias]`        | `0(some_alias)`     |
+    /// | `[$a0 + 4]`           | `4($a0)`            |
+    /// | `[$a0 - 4]`           | `-4($a0)`           |
+    /// | `[$a0 - MY_CONSTANT]` | `-MY_CONSTANT($a0)` |
+    /// | `[some_arg + 4]`      | `4(some_arg)`       |
+    Indirection {
+        base: Option<Base>,
+        offset: Option<Offset>,
+    },
 }
 
 impl fmt::Display for LValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             LValue::Reg(reg) => write!(f, "{}", reg),
-            LValue::Mem(reg, offset) => write!(f, "{}({})", offset, reg),
+            LValue::Indirection { base, offset } => {
+                write!(f, "[")?;
+                if let Some(base) = base {
+                    write!(f, "{}", base)?;
+                }
+                if let Some(offset) = offset {
+                    write!(f, " + {}", offset)?;
+                }
+                write!(f, "]")
+            }
         }
     }
 }
@@ -68,7 +125,7 @@ pub enum Stmt {
         alternative: Option<Vec<Stmt>>,
     },
     While {
-        test_arg: Arg,
+        test_arg: RValue,
         test_cond: Vec<Instr>,
         body: Vec<Stmt>,
     },
@@ -77,49 +134,30 @@ pub enum Stmt {
 #[derive(Debug)]
 pub struct Instr {
     pub op: String,
-    pub args: Vec<Arg>,
+    pub args: Vec<RValue>,
 }
 
 #[derive(Debug, Clone)]
-pub enum Arg {
-    /// Example: `0xBEEF`
+pub enum RValue {
+    /// Example: `0xBEEF`, `123`, `0b00001111`, `0o2375`
     Uint(u16),
+
     /// Example: `+23`, `-23`
     Int(i16),
-    /// Example: `'a'`, `\n`
+
+    /// Example: `'a'`, `'\n'`
     Char(u8),
+
     /// Example: `"hello\n"`
     String(String),
+
     /// Example: `@some_label`
     Label(String),
-    /// Example: `$t0`, `$rv`
-    Reg(Reg),
 
-    /// Examples:
-    ///     - `[$a0]`
-    ///     - `[$a0 + 4]`
-    ///     - `[$a0 - 4]`
-    ///     - `[0xBEEF]`
-    ///     - `[some_arg]`
-    ///     - `[some_arg + 4]`
-    INDIRECTION {
-        base: Box<Arg>,
-        offset: Option<Box<Arg>>,
-        offset_negated: bool,
-    },
-
-    /// Examples:
-    /// - `[$a0]`
-    /// - `[$a0 + 4]`
-    /// - `[$a0 - 4]`
-    /// - `[0xBEEF]`
-    Offset(i16, Reg),
-    /// Examples:
-    ///     - `[some_arg]`
-    ///     - `[some_arg + 4]`
-    AliasIndirection(Var, Option<i16>),
     /// Example: `some_arg`
     Alias(Var),
+
+    LValue(LValue),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -173,5 +211,5 @@ pub enum Directive {
 
     /// Tells the assembler to emit the given data bytes.
     /// Example: `[[data(0xe4, VTTY_ADDR, 0xaf)]]`
-    Data(Vec<Arg>),
+    Data(Vec<RValue>),
 }

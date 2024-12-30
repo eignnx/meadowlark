@@ -94,7 +94,7 @@ impl CodeGen {
                         write!(out, ", ")?;
                     }
                     match d {
-                        Arg::Alias(name) => {
+                        RValue::Alias(name) => {
                             if self.consts.contains(name) {
                                 write!(out, "{name}")?;
                             } else if self.var_aliases.contains_key(name) {
@@ -115,7 +115,7 @@ impl CodeGen {
                                 std::process::exit(1);
                             }
                         }
-                        Arg::Uint(u) => write!(out, "{u}")?,
+                        RValue::Uint(u) => write!(out, "{u}")?,
                         other => {
                             eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());
                             eprintln!("\tA `[[data(..)]]` directive may only contain constants. Received: `{other:?}`");
@@ -232,15 +232,15 @@ impl CodeGen {
                     LValue::Reg(Reg::Arg(a)) => {
                         let was_available = available_argument_registers.remove(&Reg::Arg(*a));
                         if was_available {
-                            self.var_aliases.insert(qualified_name, *lvalue);
+                            self.var_aliases.insert(qualified_name, lvalue.clone());
                         } else {
                             self.warn_register_already_assigned(fn_name, *a);
                         }
                     }
-                    LValue::Mem(..) | LValue::Reg(..) => {
+                    LValue::Indirection { .. } | LValue::Reg(..) => {
                         // TODO: check liveness of the specific memory address?
                         // For example: "Warn: [$sp-4] is already aliased by another var `blah`."
-                        self.var_aliases.insert(qualified_name, *lvalue);
+                        self.var_aliases.insert(qualified_name, lvalue.clone());
                     }
                 }
 
@@ -430,8 +430,8 @@ impl CodeGen {
                 }
                 self.comment(out, "<While.Cond>")?;
                 let test_arg_resolved = match test_arg {
-                    Arg::Reg(reg) => reg,
-                    Arg::Alias(name) => {
+                    RValue::LValue(LValue::Reg(reg)) => reg,
+                    RValue::Alias(name) => {
                         let resolved = self
                             .var_aliases
                             .get(name)
@@ -470,10 +470,15 @@ impl CodeGen {
             }
 
             AliasBinding::ExplicitAlias(varname, lvalue) => {
+                {
+                    if varname == "vtty_buf_len" {
+                        println!("{binding:?}");
+                    }
+                }
                 name_path.push(varname.clone());
                 let qualified_name = name_path.join(".");
                 self.comment(out, &format!("<DefAlias {qualified_name} => {lvalue} />"))?;
-                self.var_aliases.insert(qualified_name, *lvalue);
+                self.var_aliases.insert(qualified_name, lvalue.clone());
                 name_path.pop();
             }
 
@@ -496,112 +501,28 @@ impl CodeGen {
         // write the first arg, then comma separate the rest
         let mut args = instr.args.iter();
         if let Some(arg) = args.next() {
-            self.compile_instr_arg(out, arg)?;
+            self.compile_instr_rvalue(out, arg)?;
         }
         for arg in args {
             write!(out, ", ")?;
-            self.compile_instr_arg(out, arg)?;
+            self.compile_instr_rvalue(out, arg)?;
         }
         writeln!(out)?;
         Ok(())
     }
 
-    fn compile_instr_arg(&mut self, out: &mut dyn io::Write, arg: &Arg) -> io::Result<()> {
+    fn compile_instr_rvalue(&mut self, out: &mut dyn io::Write, arg: &RValue) -> io::Result<()> {
         match arg {
-            Arg::Uint(n) => write!(out, "{}", n),
-            Arg::Int(n) => write!(out, "{}", n),
-            Arg::Char(c) => write!(out, "{}", c),
-            Arg::String(s) => {
+            RValue::Uint(n) => write!(out, "{}", n),
+            RValue::Int(n) => write!(out, "{}", n),
+            RValue::Char(c) => write!(out, "{}", c),
+            RValue::String(s) => {
                 let fresh_lbl = self.get_or_insert_string_literal(s);
                 write!(out, "{fresh_lbl}")
             }
-            Arg::Label(name) => write!(out, "{}", name),
-            Arg::Reg(reg) => write!(out, "{}", reg),
+            RValue::Label(name) => write!(out, "{}", name),
 
-            Arg::INDIRECTION {
-                base,
-                offset,
-                offset_negated,
-            } => {
-                let offset = if let Some(offset) = offset {
-                    Arg::clone(&**offset)
-                } else {
-                    Arg::Uint(0)
-                };
-
-                let offset: String = match offset {
-                    Arg::Uint(x) => {
-                        if *offset_negated {
-                            format!("{}", -(x as i64))
-                        } else {
-                            format!("{}", x as i64)
-                        }
-                    }
-                    Arg::Alias(name) => {
-                        // It MUST be a constant.
-                        if self.consts.contains(&name) {
-                            if *offset_negated {
-                                format!("-{name}")
-                            } else {
-                                format!("{name}")
-                            }
-                        } else {
-                            eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());
-                            eprintln!("\tA variable reference in second position cannot refer to a runtime value. It must be const. `{name}`.");
-                            std::process::exit(1);
-                        }
-                    }
-                    other => {
-                        eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());
-                        eprintln!("\tThe offset in an indirection expression must be a const or an integer. Received `{other:?}`.");
-                        std::process::exit(1);
-                    }
-                };
-
-                match base.as_ref() {
-                    Arg::Alias(name) => {
-                        if let Some(resolved) = self.var_aliases.get(name) {
-                            write!(out, "{offset}({resolved})")
-                        } else if self.consts.contains(name) {
-                            // `customasm` will handle interpolating this constant later.
-                            write!(out, "({offset}+{name})($zero)")
-                        } else {
-                            eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());
-                            eprintln!("\tUndefined variable `{}`.", name);
-                            std::process::exit(1);
-                        }
-                    }
-                    Arg::Uint(addr) => write!(out, "({offset}+{addr})($zero)"),
-                    Arg::Reg(reg) => write!(out, "{offset}({reg})"),
-                    other => {
-                        eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());
-                        eprintln!("\tThe base in an indirection expression must be an alias or an integer. Received `{other:?}`.");
-                        std::process::exit(1);
-                    }
-                }
-            }
-
-            Arg::Offset(n, reg) => write!(out, "{n}({reg})"),
-            Arg::AliasIndirection(name, arg_offset) => {
-                if let Some(resolved) = self.var_aliases.get(name) {
-                    let arg_offset = arg_offset.unwrap_or_default();
-
-                    match resolved {
-                        LValue::Reg(reg) => write!(out, "{arg_offset}({reg})"),
-                        LValue::Mem(reg, alias_offset) => {
-                            write!(out, "{offset}({reg})", offset = alias_offset + arg_offset)
-                        }
-                    }
-                } else if self.consts.contains(name) {
-                    let arg_offset = arg_offset.unwrap_or_default();
-                    write!(out, "{offset}({name})", offset = arg_offset)
-                } else {
-                    eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());
-                    eprintln!("\tUndefined variable `{}`.", name);
-                    std::process::exit(1);
-                }
-            }
-            Arg::Alias(name) => {
+            RValue::Alias(name) => {
                 if let Some(resolved) = self.var_aliases.get(name) {
                     write!(out, "{resolved}")
                 } else if self.consts.contains(name) {
@@ -612,6 +533,83 @@ impl CodeGen {
                     eprintln!("\tUndefined variable `{}`.", name);
                     std::process::exit(1);
                 }
+            }
+
+            RValue::LValue(lvalue) => self.compile_instr_lvalue(out, lvalue),
+        }
+    }
+
+    fn compile_instr_lvalue(&mut self, out: &mut dyn io::Write, lvalue: &LValue) -> io::Result<()> {
+        match lvalue {
+            LValue::Reg(reg) => write!(out, "{}", reg),
+            LValue::Indirection { base, offset } => {
+                // This case is a little exceptional. If it looks like the base is a constant,
+                // interpret the constant as an offset from the zero register.
+                if let (Some(Base::AliasOrConst(base)), None) = (base, offset) {
+                    if self.consts.contains(base) {
+                        write!(out, "{base}($zero)")?;
+                        return Ok(());
+                    }
+                }
+
+                if let Some(offset) = offset {
+                    match offset {
+                        Offset::I10(i) => write!(out, "{}", i)?,
+                        Offset::Const(name) => {
+                            if self.consts.contains(name) {
+                                write!(out, "{name}")?;
+                            } else {
+                                eprintln!(
+                                    "Error [{}#{}]:",
+                                    self.filename(),
+                                    self.current_fn_name()
+                                );
+                                eprintln!("\tA variable reference in an indirection expression must be a constant. `{name}`.");
+                                std::process::exit(1);
+                            }
+                        }
+                        Offset::NegatedConst(name) => {
+                            if self.consts.contains(name) {
+                                write!(out, "-{name}")?;
+                            } else {
+                                eprintln!(
+                                    "Error [{}#{}]:",
+                                    self.filename(),
+                                    self.current_fn_name()
+                                );
+                                eprintln!("\tA variable reference in an indirection expression must be a constant. `{name}`.");
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                } else {
+                    write!(out, "0")?;
+                }
+
+                write!(out, "(")?;
+                if let Some(base) = base {
+                    match base {
+                        Base::Reg(reg) => write!(out, "{reg}")?,
+                        Base::AliasOrConst(name) => {
+                            if self.consts.contains(name) {
+                                write!(out, "{name}")?;
+                            } else if let Some(resolved) = self.var_aliases.get(name) {
+                                write!(out, "{resolved}")?;
+                            } else {
+                                eprintln!(
+                                    "Error [{}#{}]:",
+                                    self.filename(),
+                                    self.current_fn_name()
+                                );
+                                eprintln!("\tUndefined variable `{name}`.");
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                }
+                write!(out, ")")?;
+
+                Ok(())
             }
         }
     }

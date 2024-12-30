@@ -8,9 +8,11 @@ use crate::{
         LValue,
         Stmt,
         Instr,
-        Arg,
+        RValue,
         Reg,
         Directive,
+        Offset,
+        Base,
     }
 };
 
@@ -60,13 +62,6 @@ Item: Item = {
     Directive => Item::Directive(<>),
 }
 
-LValue: LValue = {
-    <reg: Reg> => LValue::Reg(reg),
-    "[" <reg: Reg> <offset: Signed> "]" => LValue::Mem(reg, offset),
-    "[" <addr: Unsigned> "]" => LValue::Mem(Reg::Zero, addr as i16),
-    "[" <reg: Reg> "]" => LValue::Mem(reg, 0),
-};
-
 Stmt: Stmt = {
     "restore" ";" => Stmt::Restore,
     "alias" <binding: AliasBinding> ";" => Stmt::DefAlias(binding),
@@ -101,12 +96,12 @@ IfStmt: Stmt = {
 };
 
 WhileLoop: Stmt = {
-    "while" <test_arg: Arg> "do" "{" <body: Stmt*> "}" => Stmt::While {
+    "while" <test_arg: RValue> "do" "{" <body: Stmt*> "}" => Stmt::While {
         test_arg,
         test_cond: vec![],
         body,
     },
-    "while" <test_arg: Arg> "(" <first: Instr> <rest_test_cond: RestTestCond?> ")" "do" "{" <body: Stmt*> "}" => Stmt::While {
+    "while" <test_arg: RValue> "(" <first: Instr> <rest_test_cond: RestTestCond?> ")" "do" "{" <body: Stmt*> "}" => Stmt::While {
         test_arg,
         test_cond: std::iter::once(first).chain(rest_test_cond.into_iter().flatten()).collect(),
         body,
@@ -119,7 +114,7 @@ RestTestCond: Vec<Instr> = {
 
 Instr: Instr = {
     <op: OpName> => Instr { op, args: vec![] },
-    <op: OpName> <fst: Arg> <rest: ("," <Arg>)*> => {
+    <op: OpName> <fst: RValue> <rest: ("," <RValue>)*> => {
         let args = std::iter::once(fst).chain(rest.into_iter()).collect();
         Instr { op, args }
     },
@@ -128,10 +123,19 @@ Instr: Instr = {
 LabelIdent: String = <id: r#"[a-zA-Z_.][a-zA-Z0-9_.]*"#> => id.to_string();
 OpName: String = <op: r"![a-z]+"> => op[1..].to_string();
 
-Arg: Arg = {
-    <reg: Reg> => Arg::Reg(reg),
-    <i: ImmOrOffset> => i,
-    <l: @L> <char_content: r"'[^']+'"> <r: @R> =>? Ok(Arg::Char(
+RValue: RValue = {
+    <imm: Integer> => imm,
+    <char_literal: CharLit> => char_literal,
+    <string_literal: r#""[^"]*""#> => {
+        RValue::String(string_literal[1..string_literal.len()-1].to_string())
+    },
+    r"@" <label: LabelIdent> => RValue::Label(label.to_string()),
+    <var_name: LabelIdent> => RValue::Alias(var_name.to_string()),
+    <lvalue: LValue> => RValue::LValue(lvalue),
+};
+
+CharLit: RValue = {
+    <l: @L> <char_content: r"'[^']+'"> <r: @R> =>? Ok(RValue::Char(
         match &char_content[1..char_content.len()-1] {
             r"\n" => b'\n',
             r"\t" => b'\t',
@@ -158,49 +162,54 @@ Arg: Arg = {
             ),
         }
     )),
-    <string_literal: r#""[^"]*""#> => {
-        Arg::String(string_literal[1..string_literal.len()-1].to_string())
-    },
-    r"@" <label: LabelIdent> => Arg::Label(label.to_string()),
-    <var_name: LabelIdent> => Arg::Alias(var_name.to_string()),
 };
 
-ImmOrOffset: Arg = {
-    "[" <base: Arg> "]" => Arg::INDIRECTION {
-        base: Box::new(base),
-        offset: None,
-        offset_negated: false,
+LValue: LValue = {
+    <reg: Reg> => LValue::Reg(reg),
+    "[" <offset: Offset> "]" => LValue::Indirection {
+        base: None,
+        offset: Some(offset),
     },
-    "[" <base: Arg> <offset: Signed> "]" => {
-        let offset_negated = offset < 0;
-        Arg::INDIRECTION {
-            base: Box::new(base),
-            offset: Some(Box::new(Arg::Uint(offset.abs() as u16))),
-            offset_negated,
+    "[" <base: Base> "]" => LValue::Indirection {
+        base: Some(base),
+        offset: None,
+    },
+    "[" <base: Base>  <offset: Offset> "]" => LValue::Indirection {
+        base: Some(base),
+        offset: Some(offset),
+    },
+};
+
+Base: Base = {
+    <reg: Reg> => Base::Reg(reg),
+    <name: LabelIdent> => Base::AliasOrConst(name),
+};
+
+Offset: Offset = {
+    <l:@L> <signed: Signed> <r: @R> =>? {
+        if (-512..512).contains(&signed) {
+            Ok(Offset::I10(signed))
+        } else {
+            Err(ParseError::User {
+                error: UserError {
+                    msg: format!("Offset immediate must fit in range -512..512. Received: {signed}"),
+                    span: (l, r),
+                }
+            })
         }
     },
-    "[" <base: Arg> "+" <offset: LabelIdent> "]" => Arg::INDIRECTION {
-        base: Box::new(base),
-        offset: Some(Box::new(Arg::Alias(offset))),
-        offset_negated: false,
-    },
-    "[" <base: Arg> "-" <offset: LabelIdent> "]" => Arg::INDIRECTION {
-        base: Box::new(base),
-        offset: Some(Box::new(Arg::Alias(offset))),
-        offset_negated: true,
-    },
-
-    <imm: Integer> => imm,
+    "+" <konst: LabelIdent> => Offset::Const(konst),
+    "-" <konst: LabelIdent> => Offset::NegatedConst(konst),
 };
 
-UintOrConst: Arg = {
-    <uint: Unsigned> => Arg::Uint(uint),
-    <const_name: LabelIdent> => Arg::Alias(const_name),
+UintOrConst: RValue = {
+    <uint: Unsigned> => RValue::Uint(uint),
+    <const_name: LabelIdent> => RValue::Alias(const_name),
 };
 
-Integer: Arg = {
-    <u: Unsigned> => Arg::Uint(u),
-    <i: Signed> => Arg::Int(i),
+Integer: RValue = {
+    <u: Unsigned> => RValue::Uint(u),
+    <i: Signed> => RValue::Int(i),
 };
 
 Unsigned: u16 = {
@@ -220,8 +229,51 @@ Unsigned: u16 = {
 };
 
 Signed: i16 = {
-    <n: r"\+[0-9]+"> => n.parse().unwrap(),
-    <n: r"\-[0-9]+"> => n.parse().unwrap(),
+    <n: r"(\+|\-)[0-9]+"> => {
+        i16::from_str_radix(n, 10).expect("parse signed decimal number")
+    },
+    <l: @L> <n: r"(\+|\-)0x[0-9a-fA-F]+"> <r: @R> =>? {
+        let sign = &n[..1];
+        let digits = &n[3..].to_ascii_lowercase();
+        let n = format!("{sign}{digits}");
+        match i16::from_str_radix(&n, 16) {
+            Err(e) => Err(ParseError::User {
+                error: UserError {
+                    msg: format!("Failed to parse signed hexadecimal number: `{n}` Cause: {:?}", e.kind()),
+                    span: (l, r),
+                }
+            }),
+            Ok(n) => Ok(n),
+        }
+    },
+    <l: @L> <n: r"(\+|\-)0o[0-7]+"> <r: @R> =>? {
+        let sign = &n[..1];
+        let digits = &n[3..];
+        let n = format!("{sign}{digits}");
+        match i16::from_str_radix(&n, 8) {
+            Err(e) => Err(ParseError::User {
+                error: UserError {
+                    msg: format!("Failed to parse signed octal number: `{n}` Cause: {:?}", e.kind()),
+                    span: (l, r),
+                }
+            }),
+            Ok(n) => Ok(n),
+        }
+    },
+    <l: @L> <n: r"(\+|\-)0b[01]+"> <r: @R> =>? {
+        let sign = &n[..1];
+        let digits = &n[3..];
+        let n = format!("{sign}{digits}");
+        match i16::from_str_radix(&n, 2) {
+            Err(e) => Err(ParseError::User {
+                error: UserError {
+                    msg: format!("Failed to parse signed binary number: `{n}` Cause: {:?}", e.kind()),
+                    span: (l, r),
+                }
+            }),
+            Ok(n) => Ok(n),
+        }
+    },
 }
 
 Reg: Reg = {
@@ -251,12 +303,12 @@ Reg: Reg = {
 
 Directive: Directive = {
     "[[addr(" <addr: Unsigned> ")]]" => Directive::Addr(addr),
-    "[[data(" <l:@L> <first: Arg> <r:@R> <rest: ("," <@L> <Arg> <@R>)*> ")]]" =>? {
+    "[[data(" <l:@L> <first: RValue> <r:@R> <rest: ("," <@L> <RValue> <@R>)*> ")]]" =>? {
         let mut data = vec![];
         for (l, d, r) in [(l, first, r)].into_iter().chain(rest.into_iter()) {
             match d {
-                Arg::Alias(..) => data.push(d),
-                Arg::Uint(uint) => if let Err(e) = u8::try_from(uint) {
+                RValue::Alias(..) => data.push(d),
+                RValue::Uint(uint) => if let Err(e) = u8::try_from(uint) {
                         return Err(ParseError::User {
                             error: UserError {
                                 msg: format!("Data element `{uint}` must fit in a byte (0..=255)."),

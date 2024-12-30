@@ -1,0 +1,82 @@
+fn _start() {
+    !jal $ra, @boot;
+    !j @main;
+}
+
+def slot__ILL_INSTR: u16 = 0xFFFE;
+def slot__KEY_EVENT: u16 = 0xFFFA;
+
+fn boot() {
+    alias vec_slot => $t0;
+    alias fn_ptr => $t1;
+
+    # Setup ILL_INSTR handler
+    !li vec_slot, slot__ILL_INSTR; # Slot in interrupt vector
+    !li fn_ptr, @handle__ILL_INSTR; # Function pointer of handler
+    !sw [vec_slot], fn_ptr;
+
+    # Setup KEY_EVENT handler
+    !li vec_slot, slot__KEY_EVENT;
+    !li fn_ptr, @handle__KEY_EVENT;
+    !sw [vec_slot], fn_ptr;
+
+    alias vtty_buf_len_addr => $t0;
+    !li vtty_buf_len_addr, 0xF002;
+    !sw [vtty_buf_len_addr], $zero; # Set length of vtty buffer to zero.
+
+
+    !jr $ra;
+}
+
+def PUTS: u16 = 3;
+
+fn main() {
+    !li $a0, "Within main";
+    !li $a1, 0o17; # deecimal 15
+    !exn PUTS;
+
+    !li $t0, 1;
+    while $t0 do {}
+}
+
+fn handle__ILL_INSTR() preserve ($a0, $a1) {
+    !li $a0, "Within handler";
+    !li $a1, 14;
+    !exn PUTS;
+    restore;
+    !kret;
+}
+
+def KEY: u16 = 0xF000;
+def VTTY_BASE: u16 = 0x0080;
+def VTTY_BUF_LEN_ADDR: u16 = 0xF002;
+
+fn handle__KEY_EVENT()
+    preserve ($a0, $a1, $t0, $t1, $t2, $s0, $s1)
+{
+    !li $a0, KEY;
+    !li $a1, 1;
+    !exn PUTS;
+
+    alias vtty_buf_len_addr => $t0;
+    alias vtty_buf_len => $s0;
+    alias char => $t1;
+    alias vtty_len => $t2;
+    alias key_addr => $s1;
+
+    !li vtty_buf_len_addr, VTTY_BUF_LEN_ADDR;
+
+    !li key_addr, KEY;
+    !lbu char, [key_addr];
+    !lw vtty_len, [vtty_buf_len_addr];
+    !addi vtty_len, vtty_len, VTTY_BASE;
+
+    !sb [vtty_len], char;
+
+    !subi vtty_len, vtty_len, VTTY_BASE;
+    !addi vtty_len, vtty_len, 1;
+    !sw [vtty_buf_len_addr], vtty_len;
+
+    restore;
+    !kret;
+}
