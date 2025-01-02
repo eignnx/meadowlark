@@ -6,7 +6,7 @@ fn _start() {
 def slot__ILL_INSTR: u16 = 0xFFFE;
 def slot__KEY_EVENT: u16 = 0xFFFA;
 
-fn boot() {
+fn boot() preserve ($ra) {
     alias vec_slot => $t0;
     alias fn_ptr => $t1;
 
@@ -24,22 +24,85 @@ fn boot() {
     !li vtty_buf_len_addr, 0xF002;
     !sw [vtty_buf_len_addr], $zero; # Set length of vtty buffer to zero.
 
+    !jal $ra, @init_key_buffer;
 
+    restore;
     !jr $ra;
 }
 
 def PUTS: u16 = 3;
 
+def KEY: u16 = 0xF000;
+def VTTY_BASE: u16 = 0x0080;
+def VTTY_BUF_LEN_ADDR: u16 = 0xF002;
+
+def KEY_BUFFER_READ_IDX_ADDR: u16 = 0xF004;
+def KEY_BUFFER_WRITE_IDX_ADDR: u16 = 0xF005;
+# A buffer of 256 bytes to hold keys pressed.
+def KEY_BUFFER_ADDR: u16 = 0xF006;
+
 fn main() {
     !li $a0, "Within main";
-    !li $a1, 0o17; # deecimal 15
+    !li $a1, 11;
     !exn PUTS;
 
-    !li $t0, 1;
-    while $t0 do {}
+loop:
+    # byte write_ptr_idx = KEY_BUFFER_WRITE_IDX_ADDR.*;
+    alias   write_ptr_idx_addr => $t0;
+    alias   write_ptr_idx => $t1;
+    !li     write_ptr_idx_addr, KEY_BUFFER_WRITE_IDX_ADDR;
+    !lbu    write_ptr_idx, [write_ptr_idx_addr];
+
+    # byte read_ptr_idx = KEY_BUFFER_READ_IDX_ADDR.*;
+    alias   read_ptr_idx_addr => $t2;
+    alias   read_ptr_idx => $s0;
+    !li     read_ptr_idx_addr, KEY_BUFFER_READ_IDX_ADDR;
+    !lbu    read_ptr_idx, [read_ptr_idx_addr];
+
+    # if read_ptr_idx != write_ptr_idx
+    alias   cond => $t0;
+    if cond (
+        !tne    cond, read_ptr_idx, write_ptr_idx;
+    ) do {
+        # byte key_code = (buffer_ptr + read_ptr_idx).*;
+        alias   buffer_ptr => $t1;
+        !li     buffer_ptr, KEY_BUFFER_ADDR;
+        alias   read_ptr => $s1;
+        !addu   read_ptr, buffer_ptr, read_ptr_idx;
+        alias   key_code => $a0;
+        !lbu    key_code, [read_ptr];
+
+        # read_ptr_idx++;
+        !addi   read_ptr_idx, read_ptr_idx, 1;
+        !sb     [read_ptr_idx_addr], read_ptr_idx;
+
+        # vtty_putc(key_code);
+        !jal    $ra, @vtty_putc;
+    }
+
+    # continue;
+    !bf     $zero, @loop;
 }
 
-fn handle__ILL_INSTR() preserve ($a0, $a1) {
+fn vtty_putc(key_code) {
+    alias   vtty_buf_len_addr => $t0;
+    alias   vtty_len => $t1;
+
+    !li     vtty_buf_len_addr, VTTY_BUF_LEN_ADDR;
+
+    !lw     vtty_len, [vtty_buf_len_addr];
+    !addi   vtty_len, vtty_len, VTTY_BASE;
+
+    !sb     [vtty_len], key_code;
+
+    !subi   vtty_len, vtty_len, VTTY_BASE;
+    !addi   vtty_len, vtty_len, 1;
+    !sw     [vtty_buf_len_addr], vtty_len;
+
+    !jr     $ra;
+}
+
+isr handle__ILL_INSTR() preserve ($a0, $a1) {
     !li $a0, "Within handler";
     !li $a1, 14;
     !exn PUTS;
@@ -47,36 +110,59 @@ fn handle__ILL_INSTR() preserve ($a0, $a1) {
     !kret;
 }
 
-def KEY: u16 = 0xF000;
-def VTTY_BASE: u16 = 0x0080;
-def VTTY_BUF_LEN_ADDR: u16 = 0xF002;
+fn init_key_buffer() {
+    # Set read/write ptrs equal.
+    !li     $t0, KEY_BUFFER_READ_IDX_ADDR;
+    !sb     [$t0], $zero;
+    !li     $t0, KEY_BUFFER_WRITE_IDX_ADDR;
+    !sb     [$t0], $zero;
+    !jr     $ra;
+}
 
-fn handle__KEY_EVENT()
-    preserve ($a0, $a1, $t0, $t1, $t2, $s0, $s1)
-{
-    !li $a0, KEY;
-    !li $a1, 1;
-    !exn PUTS;
+isr handle__KEY_EVENT() {
+    # Definitely preserve $k0 because it holds the instruction address we jumped FROM.
+    preserve ($k0, $t0, $t1, $t2, $s0);
 
-    alias vtty_buf_len_addr => $t0;
-    alias vtty_buf_len => $s0;
-    alias char => $t1;
-    alias vtty_len => $t2;
-    alias key_addr => $s1;
+    # byte key_code = KEY.*;
+    !li     $t0, KEY;
+    alias   key_code => $k0;
+    !lbu    key_code, [$t0];
 
-    !li vtty_buf_len_addr, VTTY_BUF_LEN_ADDR;
+    # byte* write_ptr_idx_addr = KEY_BUFFER_WRITE_IDX_ADDR;
+    alias   write_ptr_idx_addr => $k1;
+    !li     write_ptr_idx_addr, KEY_BUFFER_WRITE_IDX_ADDR;
 
-    !li key_addr, KEY;
-    !lbu char, [key_addr];
-    !lw vtty_len, [vtty_buf_len_addr];
-    !addi vtty_len, vtty_len, VTTY_BASE;
+    # byte write_ptr_idx = write_ptr_idx_addr.*;
+    alias   write_ptr_idx => $t1;
+    !lbu    write_ptr_idx, [write_ptr_idx_addr];
 
-    !sb [vtty_len], char;
+    # byte* buffer = KEY_BUFFER_ADDR;
+    alias   buffer => $t2;
+    !li     buffer, KEY_BUFFER_ADDR;
 
-    !subi vtty_len, vtty_len, VTTY_BASE;
-    !addi vtty_len, vtty_len, 1;
-    !sw [vtty_buf_len_addr], vtty_len;
+    # byte* write_ptr = buffer + (byte*) write_ptr_idx
+    alias   write_ptr => $s0;
+    !addu   write_ptr, buffer, write_ptr_idx;
+
+    # write_ptr.* = key_code;
+    !sw     [write_ptr], key_code;
+
+    # write_ptr_idx +%= 1;
+    !addi   write_ptr_idx, write_ptr_idx, 1;
+
+    # write_ptr_idx_addr.* = write_ptr_idx;
+    !sb     [write_ptr_idx_addr], write_ptr_idx;
 
     restore;
     !kret;
+
+    # preserve ($k0, $a0, $a1, $t0, $t1, $t2, $s0, $s1);
+
+    # !li $a0, KEY;
+    # !li $a1, 1;
+    # !exn PUTS;
+
+
+    # restore;
+    # !kret;
 }
