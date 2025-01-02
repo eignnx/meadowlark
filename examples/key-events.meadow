@@ -1,6 +1,6 @@
 fn _start() {
-    !jal $ra, @boot;
-    !j @main;
+    !jal $ra, &boot;
+    !j &main;
 }
 
 def slot__ILL_INSTR: u16 = 0xFFFE;
@@ -12,19 +12,19 @@ fn boot() preserve ($ra) {
 
     # Setup ILL_INSTR handler
     !li vec_slot, slot__ILL_INSTR; # Slot in interrupt vector
-    !li fn_ptr, @handle__ILL_INSTR; # Function pointer of handler
+    !li fn_ptr, &handle__ILL_INSTR; # Function pointer of handler
     !sw [vec_slot], fn_ptr;
 
     # Setup KEY_EVENT handler
     !li vec_slot, slot__KEY_EVENT;
-    !li fn_ptr, @handle__KEY_EVENT;
+    !li fn_ptr, &handle__KEY_EVENT;
     !sw [vec_slot], fn_ptr;
 
     alias vtty_buf_len_addr => $t0;
     !li vtty_buf_len_addr, 0xF002;
     !sw [vtty_buf_len_addr], $zero; # Set length of vtty buffer to zero.
 
-    !jal $ra, @init_key_buffer;
+    !jal $ra, &init_key_buffer;
 
     restore;
     !jr $ra;
@@ -77,11 +77,11 @@ loop:
         !sb     [read_ptr_idx_addr], read_ptr_idx;
 
         # vtty_putc(key_code);
-        !jal    $ra, @vtty_putc;
+        !jal    $ra, &vtty_putc;
     }
 
     # continue;
-    !bf     $zero, @loop;
+    !bf     $zero, &loop;
 }
 
 fn vtty_putc(key_code) {
