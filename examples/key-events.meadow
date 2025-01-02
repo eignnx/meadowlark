@@ -46,42 +46,41 @@ subr main() {
     !li $a1, 11;
     !exn PUTS;
 
-loop:
-    # byte write_ptr_idx = KEY_BUFFER_WRITE_IDX_ADDR.*;
-    alias   write_ptr_idx_addr => $t0;
-    alias   write_ptr_idx => $t1;
-    !li     write_ptr_idx_addr, KEY_BUFFER_WRITE_IDX_ADDR;
-    !lbu    write_ptr_idx, [write_ptr_idx_addr];
+    loop {
+        # byte write_ptr_idx = KEY_BUFFER_WRITE_IDX_ADDR.*;
+        alias   write_ptr_idx_addr => $t0;
+        alias   write_ptr_idx => $t1;
+        !li     write_ptr_idx_addr, KEY_BUFFER_WRITE_IDX_ADDR;
+        !lbu    write_ptr_idx, [write_ptr_idx_addr];
 
-    # byte read_ptr_idx = KEY_BUFFER_READ_IDX_ADDR.*;
-    alias   read_ptr_idx_addr => $t2;
-    alias   read_ptr_idx => $s0;
-    !li     read_ptr_idx_addr, KEY_BUFFER_READ_IDX_ADDR;
-    !lbu    read_ptr_idx, [read_ptr_idx_addr];
+        # byte read_ptr_idx = KEY_BUFFER_READ_IDX_ADDR.*;
+        alias   read_ptr_idx_addr => $t2;
+        alias   read_ptr_idx => $s0;
+        !li     read_ptr_idx_addr, KEY_BUFFER_READ_IDX_ADDR;
+        !lbu    read_ptr_idx, [read_ptr_idx_addr];
 
-    # if read_ptr_idx != write_ptr_idx
-    alias   cond => $t0;
-    if cond (
-        !tne    cond, read_ptr_idx, write_ptr_idx;
-    ) do {
-        # byte key_code = (buffer_ptr + read_ptr_idx).*;
-        alias   buffer_ptr => $t1;
-        !li     buffer_ptr, KEY_BUFFER_ADDR;
-        alias   read_ptr => $s1;
-        !addu   read_ptr, buffer_ptr, read_ptr_idx;
-        alias   key_code => $a0;
-        !lbu    key_code, [read_ptr];
+        # if read_ptr_idx != write_ptr_idx
+        alias   cond => $t0;
+        if cond (
+            !tne    cond, read_ptr_idx, write_ptr_idx;
+        ) do {
+            # byte key_code = (buffer_ptr + read_ptr_idx).*;
+            alias   buffer_ptr => $t1;
+            !li     buffer_ptr, KEY_BUFFER_ADDR;
+            alias   read_ptr => $s1;
+            !addu   read_ptr, buffer_ptr, read_ptr_idx;
+            alias   key_code => $a0;
+            !lbu    key_code, [read_ptr];
 
-        # read_ptr_idx++;
-        !addi   read_ptr_idx, read_ptr_idx, 1;
-        !sb     [read_ptr_idx_addr], read_ptr_idx;
+            # read_ptr_idx++;
+            !addi   read_ptr_idx, read_ptr_idx, 1;
+            !sb     [read_ptr_idx_addr], read_ptr_idx;
 
-        # vtty_putc(key_code);
-        !jal    $ra, &vtty_putc;
+            # vtty_putc(key_code);
+            !jal    $ra, &vtty_putc;
+        }
+
     }
-
-    # continue;
-    !bf     $zero, &loop;
 }
 
 subr vtty_putc(key_code) {

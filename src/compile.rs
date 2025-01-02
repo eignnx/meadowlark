@@ -196,7 +196,7 @@ impl CodeGen {
 
         // Compile the body.
         for stmt in body {
-            self.compile_stmt(out, stmt, is_isr)?;
+            self.compile_stmt(out, stmt)?;
         }
 
         self.comment(out, "</SubrDef>")?;
@@ -352,12 +352,7 @@ impl CodeGen {
         );
     }
 
-    fn compile_stmt(
-        &mut self,
-        out: &mut dyn io::Write,
-        stmt: &Stmt,
-        is_isr: bool,
-    ) -> io::Result<()> {
+    fn compile_stmt(&mut self, out: &mut dyn io::Write, stmt: &Stmt) -> io::Result<()> {
         match stmt {
             Stmt::Label(name) => writeln!(out, "{}:", name)?,
 
@@ -482,7 +477,7 @@ impl CodeGen {
 
                 self.comment(out, "<IfElse.Consequent>")?;
                 for stmt in consequent {
-                    self.compile_stmt(out, stmt, is_isr)?;
+                    self.compile_stmt(out, stmt)?;
                 }
                 self.comment(out, "</IfElse.Consequent>")?;
 
@@ -492,7 +487,7 @@ impl CodeGen {
 
                 if let Some(alternative) = alternative {
                     for stmt in alternative {
-                        self.compile_stmt(out, stmt, is_isr)?;
+                        self.compile_stmt(out, stmt)?;
                     }
                 }
 
@@ -515,7 +510,7 @@ impl CodeGen {
                 self.comment(out, "<While.Body>")?;
                 writeln!(out, "{loop_top}:")?;
                 for stmt in body {
-                    self.compile_stmt(out, stmt, is_isr)?;
+                    self.compile_stmt(out, stmt)?;
                 }
                 self.comment(out, "</While.Body>")?;
                 self.comment(out, "<While.Cond>")?;
@@ -540,6 +535,18 @@ impl CodeGen {
                 };
                 writeln!(out, "\tbt\t{test_arg_resolved}, {loop_top}")?;
                 self.comment(out, "</While>")?;
+                writeln!(out)?;
+            }
+
+            Stmt::Loop { body } => {
+                let loop_top = self.label_indexes.fresh(".loop_top");
+                self.comment(out, "<Loop>")?;
+                writeln!(out, "{loop_top}:")?;
+                for stmt in body {
+                    self.compile_stmt(out, stmt)?;
+                }
+                writeln!(out, "\tj\t{loop_top}")?;
+                self.comment(out, "</Loop>")?;
                 writeln!(out)?;
             }
         }

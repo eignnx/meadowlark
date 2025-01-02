@@ -82,6 +82,7 @@ Stmt: Stmt = {
     <label: LabelIdent> ":" => Stmt::Label(label.to_string()),
     <if_stmt: IfStmt> => if_stmt,
     <while_loop: WhileLoop> => while_loop,
+    "loop" "{" <body: Stmt*> "}" => Stmt::Loop { body },
 };
 
 AliasBinding: AliasBinding = {

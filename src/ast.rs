@@ -134,6 +134,9 @@ pub enum Stmt {
         test_cond: Vec<Instr>,
         body: Vec<Stmt>,
     },
+    Loop {
+        body: Vec<Stmt>,
+    },
 }
 
 #[derive(Debug)]
