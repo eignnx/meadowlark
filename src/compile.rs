@@ -78,9 +78,10 @@ impl CodeGen {
                 name,
                 args,
                 preserve_regs,
+                is_isr,
                 body,
             } => {
-                self.compile_fn_def(out, name, preserve_regs, args, body)?;
+                self.compile_fn_def(out, name, preserve_regs, args, body, *is_isr)?;
             }
 
             Item::Directive(Directive::Addr(addr)) => {
@@ -137,14 +138,15 @@ impl CodeGen {
         &mut self,
         out: &mut dyn io::Write,
         fn_name: &String,
-        preserve_regs: &Vec<Reg>,
+        preserve_regs: &[Reg],
         args: &Vec<AliasBinding>,
         body: &Vec<Stmt>,
+        is_isr: bool,
     ) -> io::Result<()> {
         // Save info about the current function so we can use it later.
         self.current_fn = Some(FnInfo {
             fn_name: fn_name.clone(),
-            callee_regs_to_save: preserve_regs.clone(),
+            callee_regs_to_save: preserve_regs.to_vec(),
         });
 
         self.comment(
@@ -188,12 +190,12 @@ impl CodeGen {
 
         // We can skip the prelude if there are no registers to preserve.
         if !preserve_regs.is_empty() {
-            self.compile_prelude(out, preserve_regs, fn_name)?;
+            self.compile_prelude(out, preserve_regs, fn_name, is_isr)?;
         }
 
         // Compile the body.
         for stmt in body {
-            self.compile_stmt(out, stmt)?;
+            self.compile_stmt(out, stmt, is_isr)?;
         }
 
         self.comment(out, "</FnDef>")?;
@@ -270,36 +272,49 @@ impl CodeGen {
     fn compile_prelude(
         &mut self,
         out: &mut dyn io::Write,
-        preserve_regs: &Vec<Reg>,
+        preserve_regs: &[Reg],
         fn_name: &String,
+        is_isr: bool,
     ) -> io::Result<()> {
-        // Warn if the user is preserving a register that is not
-        // conventionally callee saved.
-        if let Some(r) = preserve_regs.iter().find(|r| !r.is_callee_saved()) {
-            eprintln!("Warning [{}#{}]:", self.filename(), fn_name);
-            eprintln!(
-                "\tRegister `{r}` is not callee saved and usually does not need to be preserved."
-            );
+        if !is_isr {
+            // Warn if the user is preserving a register that is not
+            // conventionally callee saved.
+            let unneeded = preserve_regs
+                .iter()
+                .filter(|r| !r.is_callee_saved())
+                .map(|r| format!("`{r}`"))
+                .collect::<Vec<_>>();
+            match &unneeded[..] {
+                [] => {}
+                [r] => {
+                    eprintln!("Warning [{}#{}]:", self.filename(), fn_name);
+                    eprintln!(
+                    "\tRegister {r} is not callee saved and usually does not need to be preserved."
+                );
+                }
+                _ => {
+                    let unneeded = unneeded.join(", ");
+                    eprintln!("Warning [{}#{}]:", self.filename(), fn_name);
+                    eprintln!("\tRegisters {unneeded} are not callee saved and usually do not need to be preserved." );
+                }
+            }
         }
 
-        self.comment(
-            out,
-            &format!(
-                "<Preserve regs=[{reg_list}]>",
-                reg_list = preserve_regs
-                    .iter()
-                    .map(|r| r.to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ),
-        )?;
+        let reg_list = preserve_regs
+            .iter()
+            .map(Reg::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+
+        self.comment(out, &format!("<Preserve regs=[{reg_list}]>"))?;
 
         // Bump the stack pointer to make room for the registers we're about to save.
         writeln!(out, "\tsubi\t$sp, $sp, {}", preserve_regs.len() * 2)?;
 
         // Save the registers.
         for (i, reg) in preserve_regs.iter().enumerate() {
-            writeln!(out, "\tsw\t{offset}($sp), {reg}", offset = i as isize * 2)?;
+            let offset = (i * std::mem::size_of::<u16>()) as isize;
+            writeln!(out, "\tsw\t{offset}($sp), {reg}")?;
         }
 
         self.comment(out, "</Preserve>")?;
@@ -331,7 +346,12 @@ impl CodeGen {
         );
     }
 
-    fn compile_stmt(&mut self, out: &mut dyn io::Write, stmt: &Stmt) -> io::Result<()> {
+    fn compile_stmt(
+        &mut self,
+        out: &mut dyn io::Write,
+        stmt: &Stmt,
+        is_isr: bool,
+    ) -> io::Result<()> {
         match stmt {
             Stmt::Label(name) => writeln!(out, "{}:", name)?,
 
@@ -345,7 +365,7 @@ impl CodeGen {
                     .callee_regs_to_save;
                 if !regs_to_restore.is_empty() {
                     self.comment(out, "<Restore>")?;
-                    for (i, reg) in regs_to_restore.iter().enumerate() {
+                    for (i, reg) in regs_to_restore.iter().enumerate().rev() {
                         let offset = i as isize * 2;
                         writeln!(out, "\tlw\t{reg}, {offset}($sp)")?;
                     }
@@ -360,6 +380,60 @@ impl CodeGen {
                     eprintln!("\tUnnecessary `restore` statement.");
                     eprintln!("hint: Since no reigisters were `preserve`ed in the function declaration, this `restore` statement does nothing.")
                 }
+            }
+
+            Stmt::Preserve(regs) => {
+                // Make sure the current function remembers which registers it needs to restore.
+
+                let regs_to_save = &mut self
+                    .current_fn
+                    .as_mut()
+                    .expect("current function set")
+                    .callee_regs_to_save;
+
+                let mut regs_already_saved = vec![];
+
+                if regs_to_save.is_empty() {
+                    regs_to_save.extend(regs.iter().cloned());
+                } else {
+                    for reg in regs {
+                        if !regs_to_save.contains(reg) {
+                            regs_to_save.push(*reg);
+                        } else {
+                            regs_already_saved.push(*reg);
+                        }
+                    }
+                }
+
+                let reg_list = regs
+                    .iter()
+                    .map(Reg::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                self.comment(out, &format!("<Preserve regs=[{reg_list}]>"))?;
+
+                // Bump the stack pointer to make room for the registers we're about to save.
+                writeln!(out, "\tsubi\t$sp, $sp, {}", regs.len() * 2)?;
+
+                // Save the registers.
+                for (i, reg) in regs.iter().enumerate() {
+                    if regs_already_saved.contains(reg) {
+                        // Save the CURRENT value of the register, even if it was already saved.
+                        let current_fn = self.current_fn.as_ref().unwrap();
+                        let callee_regs_to_save = &current_fn.callee_regs_to_save;
+                        let stack_index =
+                            callee_regs_to_save.iter().position(|r| r == reg).unwrap();
+                        let offset = (stack_index * std::mem::size_of::<u16>()) as isize;
+                        let comment = "Update previously saved register";
+                        writeln!(out, "\tsw\t{offset}($sp), {reg} ; {comment}")?;
+                    } else {
+                        let offset = (i * std::mem::size_of::<u16>()) as isize;
+                        writeln!(out, "\tsw\t{offset}($sp), {reg}")?;
+                    }
+                }
+
+                self.comment(out, "</Preserve>")?;
             }
 
             Stmt::DefAlias(binding) => {
@@ -383,11 +457,26 @@ impl CodeGen {
                 }
                 self.comment(out, "</IfElse.Cond>")?;
 
-                writeln!(out, "\tbf\t{test_reg}, {if_else}")?;
+                let test_reg_resolved = match test_reg {
+                    RValue::LValue(LValue::Reg(reg)) => reg,
+                    RValue::Alias(name) => {
+                        let resolved = self
+                            .var_aliases
+                            .get(name)
+                            .expect("Test argument of `if` statement could not be resolved.");
+                        match resolved {
+                            LValue::Reg(reg) => reg,
+                            _ => panic!("Test argument of `if` statement is not a register."),
+                        }
+                    }
+                    _ => panic!("Test argument of `if` statement is not a register."),
+                };
+
+                writeln!(out, "\tbf\t{test_reg_resolved}, {if_else}")?;
 
                 self.comment(out, "<IfElse.Consequent>")?;
                 for stmt in consequent {
-                    self.compile_stmt(out, stmt)?;
+                    self.compile_stmt(out, stmt, is_isr)?;
                 }
                 self.comment(out, "</IfElse.Consequent>")?;
 
@@ -397,7 +486,7 @@ impl CodeGen {
 
                 if let Some(alternative) = alternative {
                     for stmt in alternative {
-                        self.compile_stmt(out, stmt)?;
+                        self.compile_stmt(out, stmt, is_isr)?;
                     }
                 }
 
@@ -420,7 +509,7 @@ impl CodeGen {
                 self.comment(out, "<While.Body>")?;
                 writeln!(out, "{loop_top}:")?;
                 for stmt in body {
-                    self.compile_stmt(out, stmt)?;
+                    self.compile_stmt(out, stmt, is_isr)?;
                 }
                 self.comment(out, "</While.Body>")?;
                 self.comment(out, "<While.Cond>")?;
@@ -435,13 +524,13 @@ impl CodeGen {
                         let resolved = self
                             .var_aliases
                             .get(name)
-                            .expect("Test argument of while loop could not be resolved.");
+                            .expect("Test argument of `while` loop could not be resolved.");
                         match resolved {
                             LValue::Reg(reg) => reg,
-                            _ => panic!("Test argument of while loop is not a register."),
+                            _ => panic!("Test argument of `while` loop is not a register."),
                         }
                     }
-                    _ => panic!("Test argument of while loop is not a register."),
+                    _ => panic!("Test argument of `while` loop is not a register."),
                 };
                 writeln!(out, "\tbt\t{test_arg_resolved}, {loop_top}")?;
                 self.comment(out, "</While>")?;
@@ -470,11 +559,6 @@ impl CodeGen {
             }
 
             AliasBinding::ExplicitAlias(varname, lvalue) => {
-                {
-                    if varname == "vtty_buf_len" {
-                        println!("{binding:?}");
-                    }
-                }
                 name_path.push(varname.clone());
                 let qualified_name = name_path.join(".");
                 self.comment(out, &format!("<DefAlias {qualified_name} => {lvalue} />"))?;

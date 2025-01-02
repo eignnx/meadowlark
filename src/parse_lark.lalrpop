@@ -34,15 +34,22 @@ pub Program: Vec<Item> = {
 };
 
 
+FnOrIsr: bool = {
+    "fn" => false,
+    "isr" => true,
+};
 
 Item: Item = {
     "def" <name: LabelIdent> ":" "u16" "=" <value: Unsigned> ";" => Item::Const { name, value },
-    "fn" <fn_name: LabelIdent> "("
+    <is_isr: FnOrIsr> <fn_name: LabelIdent> "("
         <args: (AliasBinding ("," <AliasBinding>)*)?>
-    ")" <save_regs: ("preserve" "("
+    ")"
+    <save_regs: ("preserve" "("
         <(Reg ("," <Reg>)*)?>
-    ")")?> "{" <body: Stmt*> "}" => Item::FnDef {
+    ")")?>
+    "{" <body: Stmt*> "}" => Item::FnDef {
         name: fn_name,
+        is_isr: is_isr,
 
         args: args.map(|(first, rest)| {
             std::iter::once(first).chain(rest.into_iter()).collect()
@@ -64,9 +71,15 @@ Item: Item = {
 
 Stmt: Stmt = {
     "restore" ";" => Stmt::Restore,
+    "preserve" "(" <regs: (Reg ("," <Reg>)*)> ")" ";" => {
+        let (first, rest) = regs;
+        Stmt::Preserve(
+            std::iter::once(first).chain(rest.into_iter()).collect(),
+        )
+    },
     "alias" <binding: AliasBinding> ";" => Stmt::DefAlias(binding),
     <instr: Instr> ";" => Stmt::Instr(instr),
-    <label: LabelIdent> r":" => Stmt::Label(label.to_string()),
+    <label: LabelIdent> ":" => Stmt::Label(label.to_string()),
     <if_stmt: IfStmt> => if_stmt,
     <while_loop: WhileLoop> => while_loop,
 };
@@ -81,8 +94,8 @@ AliasBinding: AliasBinding = {
 };
 
 IfStmt: Stmt = {
-    "if" <test_reg: Reg> "("
-        <first: Instr> <rest_test_cond: RestTestCond?>
+    "if" <test_reg: RValue> "("
+        <first: Instr> ";" <rest_test_cond: RestTestCond?>
     ")" "do" "{"
         <then_body: Stmt*>
     "}" <else_body: ("else" "{"
@@ -101,7 +114,9 @@ WhileLoop: Stmt = {
         test_cond: vec![],
         body,
     },
-    "while" <test_arg: RValue> "(" <first: Instr> <rest_test_cond: RestTestCond?> ")" "do" "{" <body: Stmt*> "}" => Stmt::While {
+    "while" <test_arg: RValue> "("
+        <first: Instr> <rest_test_cond: RestTestCond?>
+    ")" "do" "{" <body: Stmt*> "}" => Stmt::While {
         test_arg,
         test_cond: std::iter::once(first).chain(rest_test_cond.into_iter().flatten()).collect(),
         body,
@@ -109,7 +124,7 @@ WhileLoop: Stmt = {
 };
 
 RestTestCond: Vec<Instr> = {
-    <instrs: (";" <Instr>)+> ";" => instrs,
+    <instrs: (<Instr> ";")+> => instrs,
 };
 
 Instr: Instr = {

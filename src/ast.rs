@@ -10,6 +10,8 @@ pub enum Item {
         name: String,
         args: Vec<AliasBinding>,
         preserve_regs: Vec<Reg>,
+        /// True if the function is an interrupt service routine ("isr").
+        is_isr: bool,
         body: Vec<Stmt>,
     },
     Directive(Directive),
@@ -116,10 +118,12 @@ pub enum Stmt {
     Label(String),
     Instr(Instr),
     Restore,
+    /// Explicit preserve statement.
+    Preserve(Vec<Reg>),
     /// Example: `alias len => $k0;`
     DefAlias(AliasBinding),
     If {
-        test_reg: Reg,
+        test_reg: RValue,
         test_cond: Vec<Instr>,
         consequent: Vec<Stmt>,
         alternative: Option<Vec<Stmt>>,
