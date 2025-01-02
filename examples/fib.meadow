@@ -1,11 +1,11 @@
-fn main() {
+subr main() {
     !li $a0, 10;
     !jal $ra, @fib;
     !sw [0x0001], $rv;
     !halt;
 }
 
-fn fib(n) preserve ($ra, $s0, $s1) {
+subr fib(n) preserve ($ra, $s0, $s1) {
     if $t0 (
         !li $t1, 2;
         !tlt $t0, $a0, $t1;

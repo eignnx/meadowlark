@@ -1,4 +1,4 @@
-fn _start() {
+subr _start() {
     !jal $ra, &boot;
     !j &main;
 }
@@ -6,19 +6,19 @@ fn _start() {
 def slot__ILL_INSTR: u16 = 0xFFFE;
 def slot__KEY_EVENT: u16 = 0xFFFA;
 
-fn boot() preserve ($ra) {
+subr boot() preserve ($ra) {
     alias vec_slot => $t0;
-    alias fn_ptr => $t1;
+    alias isr_ptr => $t1;
 
     # Setup ILL_INSTR handler
     !li vec_slot, slot__ILL_INSTR; # Slot in interrupt vector
-    !li fn_ptr, &handle__ILL_INSTR; # Function pointer of handler
-    !sw [vec_slot], fn_ptr;
+    !li isr_ptr, &handle__ILL_INSTR; # Function pointer of handler
+    !sw [vec_slot], isr_ptr;
 
     # Setup KEY_EVENT handler
     !li vec_slot, slot__KEY_EVENT;
-    !li fn_ptr, &handle__KEY_EVENT;
-    !sw [vec_slot], fn_ptr;
+    !li isr_ptr, &handle__KEY_EVENT;
+    !sw [vec_slot], isr_ptr;
 
     alias vtty_buf_len_addr => $t0;
     !li vtty_buf_len_addr, 0xF002;
@@ -41,7 +41,7 @@ def KEY_BUFFER_WRITE_IDX_ADDR: u16 = 0xF005;
 # A buffer of 256 bytes to hold keys pressed.
 def KEY_BUFFER_ADDR: u16 = 0xF006;
 
-fn main() {
+subr main() {
     !li $a0, "Within main";
     !li $a1, 11;
     !exn PUTS;
@@ -84,7 +84,7 @@ loop:
     !bf     $zero, &loop;
 }
 
-fn vtty_putc(key_code) {
+subr vtty_putc(key_code) {
     alias   vtty_buf_len_addr => $t0;
     alias   vtty_len => $t1;
 
@@ -110,7 +110,7 @@ isr handle__ILL_INSTR() preserve ($a0, $a1) {
     !kret;
 }
 
-fn init_key_buffer() {
+subr init_key_buffer() {
     # Set read/write ptrs equal.
     !li     $t0, KEY_BUFFER_READ_IDX_ADDR;
     !sb     [$t0], $zero;

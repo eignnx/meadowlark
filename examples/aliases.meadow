@@ -1,4 +1,4 @@
-fn main() {
+subr main() {
     alias x => $t0;
     alias y => $t1;
     alias sum => $t2;

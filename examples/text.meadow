@@ -1,7 +1,7 @@
 def INTEGER_OUT: u16 = 0x0001;
 def VTTY: u16 = 0x0080;
 
-fn main() preserve ($s0) {
+subr main() preserve ($s0) {
     !li $t0, 'X'; # comments?
     !sw [INTEGER_OUT], $t0;
     !li $t0, '\n';

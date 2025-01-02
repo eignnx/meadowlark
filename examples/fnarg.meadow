@@ -10,7 +10,7 @@
 #     !jr $ra;
 # }
 
-fn create_user(
+subr create_user(
     emplacement,
     name_ptr,
     name_len,

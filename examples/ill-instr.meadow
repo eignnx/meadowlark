@@ -1,11 +1,11 @@
-fn _start() {
+subr _start() {
     !jal $ra, @boot;
     !j @main;
 }
 
 def slot__ILL_INSTR: u16 = 0xFFFE;
 
-fn boot() {
+subr boot() {
     alias vec_slot => $t0;
     alias fn_ptr => $t1;
 
@@ -18,7 +18,7 @@ fn boot() {
 
 def PUTS: u16 = 3;
 
-fn main() {
+subr main() {
     !li $a0, "Within main";
     !li $a1, 0o17; # deecimal 15
     !exn PUTS;
@@ -28,7 +28,7 @@ fn main() {
     !halt;
 }
 
-fn handle__ILL_INSTR() preserve ($a0, $a1) {
+subr handle__ILL_INSTR() preserve ($a0, $a1) {
     !li $a0, "Within handler";
     !li $a1, 18;
     !exn PUTS;

@@ -34,21 +34,21 @@ pub Program: Vec<Item> = {
 };
 
 
-FnOrIsr: bool = {
-    "fn" => false,
+SubrOrIsr: bool = {
+    "subr" => false,
     "isr" => true,
 };
 
 Item: Item = {
     "def" <name: LabelIdent> ":" "u16" "=" <value: Unsigned> ";" => Item::Const { name, value },
-    <is_isr: FnOrIsr> <fn_name: LabelIdent> "("
+    <is_isr: SubrOrIsr> <subr_name: LabelIdent> "("
         <args: (AliasBinding ("," <AliasBinding>)*)?>
     ")"
     <save_regs: ("preserve" "("
         <(Reg ("," <Reg>)*)?>
     ")")?>
-    "{" <body: Stmt*> "}" => Item::FnDef {
-        name: fn_name,
+    "{" <body: Stmt*> "}" => Item::SubrDef {
+        name: subr_name,
         is_isr: is_isr,
 
         args: args.map(|(first, rest)| {

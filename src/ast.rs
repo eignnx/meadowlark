@@ -6,7 +6,8 @@ pub enum Item {
         name: String,
         value: u16,
     },
-    FnDef {
+    /// `subr` is "subroutine".
+    SubrDef {
         name: String,
         args: Vec<AliasBinding>,
         preserve_regs: Vec<Reg>,

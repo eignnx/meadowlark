@@ -6,7 +6,7 @@ struct ConsCell {
     cdr: *ConsCell,
 }
 
-fn list.len(list: ConsCell { car => $a0, cdr => $a1 })
+subr list.len(list: ConsCell { car => $a0, cdr => $a1 })
     preserve ($ra)
 {
     if list.cdr {
@@ -20,7 +20,7 @@ fn list.len(list: ConsCell { car => $a0, cdr => $a1 })
     !jr $ra;
 }
 
-fn main(argc, argv) preserve ($ra, $s0, $s2) {
+subr main(argc, argv) preserve ($ra, $s0, $s2) {
     
     !addi $sp, $sp, -4;
 
@@ -75,14 +75,14 @@ fn main(argc, argv) preserve ($ra, $s0, $s2) {
     !jr $ra;
 }
 
-fn use_saved_regs(x) preserve ($s0, $s1) {
+subr use_saved_regs(x) preserve ($s0, $s1) {
     !addi $s0, $a0, 123;
     !addi $s1, $s0, 456;
     restore;
     !jr $ra;
 }
 
-fn add1(a) {
+subr add1(a) {
     !addi $rv, $a0, 1;
     !jr $ra;
 }

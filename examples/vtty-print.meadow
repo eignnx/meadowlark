@@ -1,6 +1,6 @@
 def VTTY: u16 = 0x0080;
 
-fn main() preserve ($s0) {
+subr main() preserve ($s0) {
     alias vtty => $t0;
 
     !li vtty, VTTY;

@@ -7,7 +7,7 @@ use crate::ast::*;
 pub struct CodeGen {
     label_indexes: LabelIndexes,
     emit_comments: bool,
-    current_fn: Option<FnInfo>,
+    current_subr: Option<SubrInfo>,
     filename: Option<PathBuf>,
     var_aliases: HashMap<Var, LValue>,
     consts: BTreeSet<Var>,
@@ -19,7 +19,7 @@ impl CodeGen {
         Self {
             label_indexes: LabelIndexes::new(),
             emit_comments: true,
-            current_fn: None,
+            current_subr: None,
             filename: filename.into(),
             var_aliases: HashMap::new(),
             consts: BTreeSet::new(),
@@ -34,11 +34,11 @@ impl CodeGen {
             .unwrap_or("<unknown>")
     }
 
-    fn current_fn_name(&self) -> &str {
-        self.current_fn
+    fn current_subr_name(&self) -> &str {
+        self.current_subr
             .as_ref()
-            .map(|f| f.fn_name.as_str())
-            .unwrap_or("<unknown-fn>")
+            .map(|f| f.subr_name.as_str())
+            .unwrap_or("<unknown-subr>")
     }
 
     fn comment(&self, out: &mut dyn io::Write, comment: &str) -> io::Result<()> {
@@ -74,14 +74,14 @@ impl CodeGen {
                 writeln!(out, "#const {name} = {value}")?;
             }
 
-            Item::FnDef {
+            Item::SubrDef {
                 name,
                 args,
                 preserve_regs,
                 is_isr,
                 body,
             } => {
-                self.compile_fn_def(out, name, preserve_regs, args, body, *is_isr)?;
+                self.compile_subr_def(out, name, preserve_regs, args, body, *is_isr)?;
             }
 
             Item::Directive(Directive::Addr(addr)) => {
@@ -102,7 +102,7 @@ impl CodeGen {
                                 eprintln!(
                                     "Error [{}#{}]:",
                                     self.filename(),
-                                    self.current_fn_name()
+                                    self.current_subr_name()
                                 );
                                 eprintln!("\tA variable reference in a `[[data(..)]]` directive cannot refer to a runtime value. It must be const. `{name}`.");
                                 std::process::exit(1);
@@ -110,7 +110,7 @@ impl CodeGen {
                                 eprintln!(
                                     "Error [{}#{}]:",
                                     self.filename(),
-                                    self.current_fn_name()
+                                    self.current_subr_name()
                                 );
                                 eprintln!("\tUnbound variable: `{name}`");
                                 std::process::exit(1);
@@ -118,7 +118,7 @@ impl CodeGen {
                         }
                         RValue::Uint(u) => write!(out, "{u}")?,
                         other => {
-                            eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());
+                            eprintln!("Error [{}#{}]:", self.filename(), self.current_subr_name());
                             eprintln!("\tA `[[data(..)]]` directive may only contain constants. Received: `{other:?}`");
                             std::process::exit(1);
                         }
@@ -134,26 +134,27 @@ impl CodeGen {
         Ok(())
     }
 
-    fn compile_fn_def(
+    fn compile_subr_def(
         &mut self,
         out: &mut dyn io::Write,
-        fn_name: &String,
+        subr_name: &String,
         preserve_regs: &[Reg],
         args: &Vec<AliasBinding>,
         body: &Vec<Stmt>,
         is_isr: bool,
     ) -> io::Result<()> {
         // Save info about the current function so we can use it later.
-        self.current_fn = Some(FnInfo {
-            fn_name: fn_name.clone(),
+        self.current_subr = Some(SubrInfo {
+            subr_name: subr_name.clone(),
+            is_isr,
             callee_regs_to_save: preserve_regs.to_vec(),
         });
 
         self.comment(
             out,
             format!(
-                "<FnDef name={} args=[{}]>",
-                fn_name,
+                "<SubrDef name={} args=[{}]>",
+                subr_name,
                 args.iter()
                     .map(|a| match a {
                         AliasBinding::ImplicitAlias(v) => v.to_string(),
@@ -167,7 +168,7 @@ impl CodeGen {
         )?;
 
         // Print the label.
-        writeln!(out, "{}:", fn_name)?;
+        writeln!(out, "{}:", subr_name)?;
 
         // Assign argument registers to variables according to the user's choice.
         self.var_aliases.clear();
@@ -182,7 +183,7 @@ impl CodeGen {
                 self.bind_arg_alias(
                     arg,
                     &mut available_argument_registers,
-                    fn_name,
+                    subr_name,
                     &mut name_path,
                 );
             }
@@ -190,7 +191,7 @@ impl CodeGen {
 
         // We can skip the prelude if there are no registers to preserve.
         if !preserve_regs.is_empty() {
-            self.compile_prelude(out, preserve_regs, fn_name, is_isr)?;
+            self.compile_prelude(out, preserve_regs, subr_name, is_isr)?;
         }
 
         // Compile the body.
@@ -198,7 +199,7 @@ impl CodeGen {
             self.compile_stmt(out, stmt, is_isr)?;
         }
 
-        self.comment(out, "</FnDef>")?;
+        self.comment(out, "</SubrDef>")?;
 
         Ok(())
     }
@@ -207,7 +208,7 @@ impl CodeGen {
         &mut self,
         arg: &AliasBinding,
         available_argument_registers: &mut BTreeSet<Reg>,
-        fn_name: &String,
+        subr_name: &String,
         name_path: &mut Vec<String>,
     ) {
         match arg {
@@ -220,7 +221,7 @@ impl CodeGen {
                     self.var_aliases.insert(qualified_name, LValue::Reg(reg));
                     name_path.pop();
                 } else {
-                    self.warn_no_more_arg_regs_available(fn_name, varname);
+                    self.warn_no_more_arg_regs_available(subr_name, varname);
                 }
             }
 
@@ -236,7 +237,7 @@ impl CodeGen {
                         if was_available {
                             self.var_aliases.insert(qualified_name, lvalue.clone());
                         } else {
-                            self.warn_register_already_assigned(fn_name, *a);
+                            self.warn_register_already_assigned(subr_name, *a);
                         }
                     }
                     LValue::Indirection { .. } | LValue::Reg(..) => {
@@ -260,7 +261,7 @@ impl CodeGen {
                     self.bind_arg_alias(
                         field_binding,
                         available_argument_registers,
-                        fn_name,
+                        subr_name,
                         name_path,
                     );
                     name_path.pop();
@@ -273,7 +274,7 @@ impl CodeGen {
         &mut self,
         out: &mut dyn io::Write,
         preserve_regs: &[Reg],
-        fn_name: &String,
+        subr_name: &String,
         is_isr: bool,
     ) -> io::Result<()> {
         if !is_isr {
@@ -287,14 +288,14 @@ impl CodeGen {
             match &unneeded[..] {
                 [] => {}
                 [r] => {
-                    eprintln!("Warning [{}#{}]:", self.filename(), fn_name);
+                    eprintln!("Warning [{}#{}]:", self.filename(), subr_name);
                     eprintln!(
                     "\tRegister {r} is not callee saved and usually does not need to be preserved."
                 );
                 }
                 _ => {
                     let unneeded = unneeded.join(", ");
-                    eprintln!("Warning [{}#{}]:", self.filename(), fn_name);
+                    eprintln!("Warning [{}#{}]:", self.filename(), subr_name);
                     eprintln!("\tRegisters {unneeded} are not callee saved and usually do not need to be preserved." );
                 }
             }
@@ -322,13 +323,18 @@ impl CodeGen {
         Ok(())
     }
 
-    fn warn_no_more_arg_regs_available(&mut self, fn_name: &str, varname: &str) {
-        eprintln!("Warning [{}#{}]:", self.filename(), fn_name);
+    fn warn_no_more_arg_regs_available(&mut self, subr_name: &str, varname: &str) {
+        let subr_or_isr = if self.current_subr.as_ref().unwrap().is_isr {
+            "isr"
+        } else {
+            "subr"
+        };
+        eprintln!("Warning [{}#{}]:", self.filename(), subr_name);
         eprintln!("\tNo more argument registers available for variable `{varname}`.");
         eprintln!();
         eprintln!("\thint: Consider assigning variable `{varname}` to a stack location:");
         eprintln!("\t```");
-        eprintln!("\tfn {fn_name}(.., {varname} => [$sp-INDEX], ..) {{");
+        eprintln!("\t{subr_or_isr} {subr_name}(.., {varname} => [$sp-INDEX], ..) {{");
         eprintln!("\t```");
     }
 
@@ -359,7 +365,7 @@ impl CodeGen {
 
             Stmt::Restore => {
                 let regs_to_restore = &self
-                    .current_fn
+                    .current_subr
                     .as_ref()
                     .expect("current function set")
                     .callee_regs_to_save;
@@ -375,7 +381,7 @@ impl CodeGen {
                     eprintln!(
                         "Warning [{}#{}#restore]:",
                         self.filename(),
-                        self.current_fn_name()
+                        self.current_subr_name()
                     );
                     eprintln!("\tUnnecessary `restore` statement.");
                     eprintln!("hint: Since no reigisters were `preserve`ed in the function declaration, this `restore` statement does nothing.")
@@ -386,7 +392,7 @@ impl CodeGen {
                 // Make sure the current function remembers which registers it needs to restore.
 
                 let regs_to_save = &mut self
-                    .current_fn
+                    .current_subr
                     .as_mut()
                     .expect("current function set")
                     .callee_regs_to_save;
@@ -420,8 +426,8 @@ impl CodeGen {
                 for (i, reg) in regs.iter().enumerate() {
                     if regs_already_saved.contains(reg) {
                         // Save the CURRENT value of the register, even if it was already saved.
-                        let current_fn = self.current_fn.as_ref().unwrap();
-                        let callee_regs_to_save = &current_fn.callee_regs_to_save;
+                        let current_subr = self.current_subr.as_ref().unwrap();
+                        let callee_regs_to_save = &current_subr.callee_regs_to_save;
                         let stack_index =
                             callee_regs_to_save.iter().position(|r| r == reg).unwrap();
                         let offset = (stack_index * std::mem::size_of::<u16>()) as isize;
@@ -438,7 +444,7 @@ impl CodeGen {
 
             Stmt::DefAlias(binding) => {
                 let mut name_path = vec![];
-                self.bind_fn_local_alias(out, binding, &mut name_path)?;
+                self.bind_subr_local_alias(out, binding, &mut name_path)?;
             }
 
             Stmt::If {
@@ -540,7 +546,7 @@ impl CodeGen {
         Ok(())
     }
 
-    fn bind_fn_local_alias(
+    fn bind_subr_local_alias(
         &mut self,
         out: &mut dyn io::Write,
         binding: &AliasBinding,
@@ -552,7 +558,7 @@ impl CodeGen {
                 eprintln!(
                     "Error [{}#{}]: (at `alias {name} => ...`)",
                     self.filename(),
-                    self.current_fn_name()
+                    self.current_subr_name()
                 );
                 eprintln!("\tImplied aliases are only valid for function arguments.");
                 std::process::exit(1);
@@ -572,7 +578,7 @@ impl CodeGen {
             } => {
                 for field_binding in field_bindings {
                     name_path.push(var_name.clone());
-                    self.bind_fn_local_alias(out, field_binding, name_path)?;
+                    self.bind_subr_local_alias(out, field_binding, name_path)?;
                     name_path.pop();
                 }
             }
@@ -613,7 +619,7 @@ impl CodeGen {
                     // `customasm` will handle interpolating this constant later.
                     write!(out, "{name}")
                 } else {
-                    eprintln!("Error [{}#{}]:", self.filename(), self.current_fn_name());
+                    eprintln!("Error [{}#{}]:", self.filename(), self.current_subr_name());
                     eprintln!("\tUndefined variable `{}`.", name);
                     std::process::exit(1);
                 }
@@ -646,7 +652,7 @@ impl CodeGen {
                                 eprintln!(
                                     "Error [{}#{}]:",
                                     self.filename(),
-                                    self.current_fn_name()
+                                    self.current_subr_name()
                                 );
                                 eprintln!("\tA variable reference in an indirection expression must be a constant. `{name}`.");
                                 std::process::exit(1);
@@ -659,7 +665,7 @@ impl CodeGen {
                                 eprintln!(
                                     "Error [{}#{}]:",
                                     self.filename(),
-                                    self.current_fn_name()
+                                    self.current_subr_name()
                                 );
                                 eprintln!("\tA variable reference in an indirection expression must be a constant. `{name}`.");
                                 std::process::exit(1);
@@ -683,7 +689,7 @@ impl CodeGen {
                                 eprintln!(
                                     "Error [{}#{}]:",
                                     self.filename(),
-                                    self.current_fn_name()
+                                    self.current_subr_name()
                                 );
                                 eprintln!("\tUndefined variable `{name}`.");
                                 std::process::exit(1);
@@ -713,8 +719,10 @@ impl CodeGen {
     }
 }
 
-struct FnInfo {
-    fn_name: String,
+/// Associated info for a subroutine.
+struct SubrInfo {
+    subr_name: String,
+    is_isr: bool,
     callee_regs_to_save: Vec<Reg>,
 }
 
