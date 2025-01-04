@@ -500,6 +500,7 @@ impl CodeGen {
             Stmt::While {
                 test_arg,
                 test_cond,
+                update,
                 body,
             } => {
                 let loop_top = self.label_indexes.fresh(".while_top");
@@ -513,6 +514,13 @@ impl CodeGen {
                     self.compile_stmt(out, stmt)?;
                 }
                 self.comment(out, "</While.Body>")?;
+                if let Some(update) = update {
+                    self.comment(out, "<While.Update>")?;
+                    for instr in update {
+                        self.compile_instr(out, instr)?;
+                    }
+                    self.comment(out, "</While.Update>")?;
+                }
                 self.comment(out, "<While.Cond>")?;
                 writeln!(out, "{loop_cond}:")?;
                 for instr in test_cond {

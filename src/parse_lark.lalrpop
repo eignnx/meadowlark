@@ -96,7 +96,7 @@ AliasBinding: AliasBinding = {
 
 IfStmt: Stmt = {
     "if" <test_reg: RValue> "("
-        <first: Instr> ";" <rest_test_cond: RestTestCond?>
+        <first: Instr> ";" <rest_test_cond: RestInstrSeq?>
     ")" "do" "{"
         <then_body: Stmt*>
     "}" <else_body: ("else" "{"
@@ -113,18 +113,41 @@ WhileLoop: Stmt = {
     "while" <test_arg: RValue> "do" "{" <body: Stmt*> "}" => Stmt::While {
         test_arg,
         test_cond: vec![],
+        update: None,
         body,
     },
+
     "while" <test_arg: RValue> "("
-        <first: Instr> <rest_test_cond: RestTestCond?>
+        <first: Instr> ";" <rest_test_cond: RestInstrSeq?>
     ")" "do" "{" <body: Stmt*> "}" => Stmt::While {
         test_arg,
         test_cond: std::iter::once(first).chain(rest_test_cond.into_iter().flatten()).collect(),
+        update: None,
+        body,
+    },
+
+    "while" <test_arg: RValue> "update" "("
+        <update_first: Instr> ";" <update_rest: RestInstrSeq?>
+    ")" "do" "{" <body: Stmt*> "}" => Stmt::While {
+        test_arg,
+        test_cond: vec![],
+        update: Some(std::iter::once(update_first).chain(update_rest.into_iter().flatten()).collect()),
+        body,
+    },
+    
+    "while" <test_arg: RValue> "("
+        <first: Instr> ";" <rest_test_cond: RestInstrSeq?>
+    ")" "update" "("
+        <update_first: Instr> ";" <update_rest: RestInstrSeq?>
+    ")" "do" "{" <body: Stmt*> "}" => Stmt::While {
+        test_arg,
+        test_cond: std::iter::once(first).chain(rest_test_cond.into_iter().flatten()).collect(),
+        update: Some(std::iter::once(update_first).chain(update_rest.into_iter().flatten()).collect()),
         body,
     },
 };
 
-RestTestCond: Vec<Instr> = {
+RestInstrSeq: Vec<Instr> = {
     <instrs: (<Instr> ";")+> => instrs,
 };
 

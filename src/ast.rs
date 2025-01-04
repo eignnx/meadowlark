@@ -132,6 +132,7 @@ pub enum Stmt {
     While {
         test_arg: RValue,
         test_cond: Vec<Instr>,
+        update: Option<Vec<Instr>>,
         body: Vec<Stmt>,
     },
     Loop {
