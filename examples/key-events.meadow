@@ -12,12 +12,12 @@ subr boot() preserve ($ra) {
 
     # Setup ILL_INSTR handler
     !li vec_slot, slot__ILL_INSTR; # Slot in interrupt vector
-    !li isr_ptr, &handle__ILL_INSTR; # Function pointer of handler
+    !li isr_ptr, &handle_ILL_INSTR; # Function pointer of handler
     !sw [vec_slot], isr_ptr;
 
     # Setup KEY_EVENT handler
     !li vec_slot, slot__KEY_EVENT;
-    !li isr_ptr, &handle__KEY_EVENT;
+    !li isr_ptr, &handle_KEY_EVENT;
     !sw [vec_slot], isr_ptr;
 
     alias vtty_buf_len_addr => $t0;
@@ -47,39 +47,43 @@ subr main() {
     !exn PUTS;
 
     loop {
-        # byte write_ptr_idx = KEY_BUFFER_WRITE_IDX_ADDR.*;
-        alias   write_ptr_idx_addr => $t0;
-        alias   write_ptr_idx => $t1;
-        !li     write_ptr_idx_addr, KEY_BUFFER_WRITE_IDX_ADDR;
-        !lbu    write_ptr_idx, [write_ptr_idx_addr];
 
-        # byte read_ptr_idx = KEY_BUFFER_READ_IDX_ADDR.*;
-        alias   read_ptr_idx_addr => $t2;
-        alias   read_ptr_idx => $s0;
-        !li     read_ptr_idx_addr, KEY_BUFFER_READ_IDX_ADDR;
-        !lbu    read_ptr_idx, [read_ptr_idx_addr];
+        # byte write_ptr.idx = KEY_BUFFER_WRITE_IDX_ADDR.*;
+        alias write_ptr => {
+            idx_addr => $t0;
+            idx => $t1;
+        };
+        !li     write_ptr.idx_addr, KEY_BUFFER_WRITE_IDX_ADDR;
+        !lbu    write_ptr.idx, [write_ptr.idx_addr];
 
-        # if read_ptr_idx != write_ptr_idx
+        # byte read_ptr.idx = KEY_BUFFER_READ_IDX_ADDR.*;
+        alias read_ptr => {
+            idx_addr => $t2;
+            idx => $s0;
+        };
+        !li     read_ptr.idx_addr, KEY_BUFFER_READ_IDX_ADDR;
+        !lbu    read_ptr.idx, [read_ptr.idx_addr];
+
+        # if read_ptr.idx != write_ptr.idx
         alias   cond => $t0;
         if cond (
-            !tne    cond, read_ptr_idx, write_ptr_idx;
+            !tne    cond, read_ptr.idx, write_ptr.idx;
         ) do {
-            # byte key_code = (buffer_ptr + read_ptr_idx).*;
+            # byte key_code = (buffer_ptr + read_ptr.idx).*;
             alias   buffer_ptr => $t1;
             !li     buffer_ptr, KEY_BUFFER_ADDR;
-            alias   read_ptr => $s1;
-            !addu   read_ptr, buffer_ptr, read_ptr_idx;
+            alias   read_ptr => { addr => $s1; };
+            !addu   read_ptr.addr, buffer_ptr, read_ptr.idx;
             alias   key_code => $a0;
-            !lbu    key_code, [read_ptr];
+            !lbu    key_code, [read_ptr.addr];
 
-            # read_ptr_idx++;
-            !addi   read_ptr_idx, read_ptr_idx, 1;
-            !sb     [read_ptr_idx_addr], read_ptr_idx;
+            # read_ptr.idx++;
+            !addi   read_ptr.idx, read_ptr.idx, 1;
+            !sb     [read_ptr.idx_addr], read_ptr.idx;
 
             # vtty_putc(key_code);
             !jal    $ra, &vtty_putc;
         }
-
     }
 }
 
@@ -101,7 +105,7 @@ subr vtty_putc(key_code) {
     !jr     $ra;
 }
 
-isr handle__ILL_INSTR() preserve ($a0, $a1) {
+isr handle_ILL_INSTR() preserve ($a0, $a1) {
     !li $a0, "Within handler";
     !li $a1, 14;
     !exn PUTS;
@@ -118,7 +122,7 @@ subr init_key_buffer() {
     !jr     $ra;
 }
 
-isr handle__KEY_EVENT() {
+isr handle_KEY_EVENT() {
     # Definitely preserve $k0 because it holds the instruction address we jumped FROM.
     preserve ($k0, $t0, $t1, $t2, $s0);
 
@@ -154,14 +158,4 @@ isr handle__KEY_EVENT() {
 
     restore;
     !kret;
-
-    # preserve ($k0, $a0, $a1, $t0, $t1, $t2, $s0, $s1);
-
-    # !li $a0, KEY;
-    # !li $a1, 1;
-    # !exn PUTS;
-
-
-    # restore;
-    # !kret;
 }
