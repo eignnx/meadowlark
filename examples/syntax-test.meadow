@@ -1,18 +1,19 @@
 
 def BLAH: u16 = 123;
 
-struct ConsCell {
-    car: u16,
-    cdr: *ConsCell,
-}
+# struct ConsCell {
+#     car: u16,
+#     cdr: *ConsCell,
+# }
 
-subr list.len(list: ConsCell { car => $a0, cdr => $a1 })
+# subr list.len(list: ConsCell { car => $a0, cdr => $a1 })
+subr list_len(list.car => $a0, list.cdr => $a1)
     preserve ($ra)
 {
-    if list.cdr {
+    if list.cdr do {
         !addi $rv, $rv, 1;
-        !lw cdr, [cdr+2];
-        !j @list.len;
+        !lw list.cdr, [list.cdr+2];
+        !j &list_len;
     } else {
         !li $rv, 1;
     }
@@ -24,34 +25,38 @@ subr main(argc, argv) preserve ($ra, $s0, $s2) {
     
     !addi $sp, $sp, -4;
 
-    def list = ConsCell {
-        $t0 => car,
-        [$s0 + 4] => cdr,
+    # def list = ConsCell {
+    #     $t0 => car,
+    #     [$s0 + 4] => cdr,
+    # };
+
+    alias list => {
+        car => $t0;
+        cdr => [$s0+4];
     };
 
+.loop:
     !li list.car, 321;
     !sw list.cdr, $a1;
 
-    !qwer $k1, 0xDEAD, 0xbeef;
-    !bf $k1, @.loop;
-    !asdf -123, [$rv], +435;
-    !lw $k1, [$sp + 32];
-    !lw $k1, [$sp - 32];
+    !bf $k1, &.loop;
+    !lw $k1, [$sp+32];
+    !lw $k1, [$sp-32];
 
     !halt;
 
     !li $a0, 123;
-    !jal $ra, @use_saved_regs;
+    !jal $ra, &use_saved_regs;
 
     if $t0 (
-        !tge $t0, $t1
+        !tge $t0, $t1, $t2;
     ) do {
         !add $k0, $k0, $k0;
         !addi $s0, $s0, 1;
     }
 
     !li $a0, 14;
-    !jal $ra, @fib;
+    !jal $ra, &fib;
 
     while $t1 (
         !li $t2, 100;
@@ -62,7 +67,7 @@ subr main(argc, argv) preserve ($ra, $s0, $s2) {
     }
 
     if $t0 (
-        !tge $t0, $t1
+        !tge $t0, $t1, $t2;
     ) do {
         !add $k0, $k0, $k0;
         !addi $s0, $s0, 1;
@@ -71,7 +76,23 @@ subr main(argc, argv) preserve ($ra, $s0, $s2) {
         !addi $s0, $s0, 1;
     }
 
+    while $t1 (
+        !li $t2, 100;
+        !tlt $t1, $s0, $t2;
+    ) update (
+        !add $k0, $k0, $k0;
+        !addi $s2, $s0, 1;
+    ) do {
+        !add $k0, $k0, $k0;
+        !addi $s2, $s0, 1;
+    }
+
     restore;
+    !jr $ra;
+}
+
+subr fib() {
+    !li $rv, 1;
     !jr $ra;
 }
 
