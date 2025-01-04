@@ -629,7 +629,7 @@ impl CodeGen {
 
             RValue::Alias(name) => {
                 if let Some(resolved) = self.var_aliases.get(name) {
-                    write!(out, "{resolved}")
+                    self.compile_instr_lvalue(out, &resolved.clone())
                 } else if self.consts.contains(name) {
                     // `customasm` will handle interpolating this constant later.
                     write!(out, "{name}")
@@ -699,7 +699,7 @@ impl CodeGen {
                             if self.consts.contains(name) {
                                 write!(out, "{name}")?;
                             } else if let Some(resolved) = self.var_aliases.get(name) {
-                                write!(out, "{resolved}")?;
+                                self.compile_instr_lvalue(out, &resolved.clone())?;
                             } else {
                                 eprintln!(
                                     "Error [{}#{}]:",
