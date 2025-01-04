@@ -1,29 +1,29 @@
 subr main() {
-    !li $a0, 10;
-    !jal $ra, @fib;
-    !sw [0x0001], $rv;
+    !li     $a0, 10;
+    !jal    $ra, &fib;
+    !sw     [0x0001], $rv;
     !halt;
 }
 
 subr fib(n) preserve ($ra, $s0, $s1) {
     if $t0 (
-        !li $t1, 2;
-        !tlt $t0, $a0, $t1;
+        !li     $t1, 2;
+        !tlt    $t0, $a0, $t1;
     ) do {
-        !mv $rv, $a0;
+        !mv     $rv, $a0;
     } else {
-        !mv $s0, $a0;
+        !mv     $s0, $a0;
 
-        !subi $a0, $s0, 1;
-        !jal $ra, @fib;
-        !mv $s1, $rv;
+        !subi   $a0, $s0, 1;
+        !jal    $ra, &fib;
+        !mv     $s1, $rv;
 
-        !subi $a0, $s0, 2;
-        !jal $ra, @fib;
+        !subi   $a0, $s0, 2;
+        !jal    $ra, &fib;
 
-        !add $rv, $s1, $rv;
+        !add    $rv, $s1, $rv;
     }
 
     restore;
-    !jr $ra;
+    !jr     $ra;
 }
