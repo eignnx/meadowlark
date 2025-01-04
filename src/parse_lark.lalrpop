@@ -95,6 +95,16 @@ AliasBinding: AliasBinding = {
 };
 
 IfStmt: Stmt = {
+    "if" <test_reg: RValue> "do" "{"
+        <then_body: Stmt*>
+    "}" <else_body: ("else" "{"
+         <Stmt*>
+    "}")?> => Stmt::If {
+        test_reg,
+        test_cond: vec![],
+        consequent: then_body,
+        alternative: else_body,
+    },
     "if" <test_reg: RValue> "("
         <first: Instr> ";" <rest_test_cond: RestInstrSeq?>
     ")" "do" "{"
@@ -134,7 +144,7 @@ WhileLoop: Stmt = {
         update: Some(std::iter::once(update_first).chain(update_rest.into_iter().flatten()).collect()),
         body,
     },
-    
+
     "while" <test_arg: RValue> "("
         <first: Instr> ";" <rest_test_cond: RestInstrSeq?>
     ")" "update" "("
