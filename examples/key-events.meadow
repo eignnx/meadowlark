@@ -3,8 +3,8 @@ subr _start() {
     !j &main;
 }
 
-def SLOT__ILL_INSTR: u16 = 0xFFFE;
-def SLOT__KEY_EVENT: u16 = 0xFFFA;
+def SLOT__ILL_INSTR = 0xFFFE;
+def SLOT__KEY_EVENT = 0xFFFA;
 
 subr boot() preserve ($ra) {
     alias vec_slot => $t0;
@@ -30,16 +30,16 @@ subr boot() preserve ($ra) {
     !jr $ra;
 }
 
-def PUTS: u16 = 3;
+def PUTS = 3;
 
-def KEY: u16 = 0xF000;
-def VTTY_BASE: u16 = 0x0080;
-def VTTY_BUF_LEN_ADDR: u16 = 0xF002;
+def KEY = 0xF000;
+def VTTY_BASE = 0x0080;
+def VTTY_BUF_LEN_ADDR = 0xF002;
 
-def KEY_BUFFER_READ_IDX_ADDR: u16 = 0xF004;
-def KEY_BUFFER_WRITE_IDX_ADDR: u16 = 0xF005;
+def KEY_BUFFER_READ_IDX_ADDR = 0xF004;
+def KEY_BUFFER_WRITE_IDX_ADDR = 0xF005;
 # A buffer of 256 bytes to hold keys pressed.
-def KEY_BUFFER_ADDR: u16 = 0xF006;
+def KEY_BUFFER_ADDR = 0xF006;
 
 subr main() {
     !li $a0, "Within main";

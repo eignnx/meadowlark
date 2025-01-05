@@ -18,12 +18,44 @@ pub enum Item {
     Directive(Directive),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
+pub enum BinOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    And,
+    Or,
+    Xor,
+    Shl,
+    Shr,
+}
+
+impl BinOp {
+    pub(crate) fn eval(&self, x: i32, y: i32) -> i32 {
+        match self {
+            BinOp::Add => x + y,
+            BinOp::Sub => x - y,
+            BinOp::Mul => x * y,
+            BinOp::Div => x / y,
+            BinOp::Mod => x % y,
+            BinOp::And => x & y,
+            BinOp::Or => x | y,
+            BinOp::Xor => x ^ y,
+            BinOp::Shl => x << y,
+            BinOp::Shr => x >> y,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum ConstValue {
     Uint(u16),
     Int(i16),
     Char(u8),
     ConstAlias(Var),
+    BinOp(Box<ConstValue>, BinOp, Box<ConstValue>),
 }
 
 #[derive(Debug)]

@@ -10,7 +10,7 @@ pub struct CodeGen {
     current_subr: Option<SubrInfo>,
     filename: Option<PathBuf>,
     var_aliases: HashMap<Var, LValue>,
-    consts: BTreeMap<Var, i32>,
+    consts: BTreeMap<Var, ConstValue>,
     string_literal_labels: HashMap<String, String>,
 }
 
@@ -57,8 +57,21 @@ impl CodeGen {
             .into_iter()
             .partition(|item| matches!(item, Item::Const { .. }));
 
-        for item in &consts {
-            self.compile_item(out, item)?;
+        let consts = consts
+            .into_iter()
+            .map(|item| match item {
+                Item::Const { name, value } => (name, value),
+                _ => unreachable!(),
+            })
+            .collect::<Vec<_>>();
+
+        for (name, value) in &consts {
+            self.consts.insert(name.clone(), value.clone());
+        }
+
+        for (name, value) in &consts {
+            let evaluated = self.eval_const_value(value, 0);
+            writeln!(out, "#const {name} = {evaluated}")?;
         }
 
         writeln!(out)?;
@@ -79,15 +92,8 @@ impl CodeGen {
 
     fn compile_item(&mut self, out: &mut dyn io::Write, item: &Item) -> io::Result<()> {
         match item {
-            Item::Const { name, value } => {
-                let value = match value {
-                    ConstValue::Uint(u) => *u as i32,
-                    ConstValue::Int(i) => *i as i32,
-                    ConstValue::Char(byte) => *byte as i32,
-                    ConstValue::ConstAlias(name) => self.eval_const_alias(name),
-                };
-                self.consts.insert(name.clone(), value);
-                writeln!(out, "#const {name} = {value}")?;
+            Item::Const { .. } => {
+                unreachable!()
             }
 
             Item::SubrDef {
@@ -150,13 +156,33 @@ impl CodeGen {
         Ok(())
     }
 
-    fn eval_const_alias(&self, name: &Var) -> i32 {
-        if let Some(value) = self.consts.get(name) {
-            *value
-        } else {
+    const MAX_CONST_EVAL_DEPTH: usize = 64;
+
+    fn eval_const_value(&self, val: &ConstValue, depth: usize) -> i32 {
+        if depth > Self::MAX_CONST_EVAL_DEPTH {
             eprintln!("Error [{}#{}]:", self.filename(), self.current_subr_name());
-            eprintln!("\tUndefined constant `{name}`.");
+            eprintln!("\tMaximum const-evaluation depth exceeded.");
             std::process::exit(1);
+        }
+
+        match val {
+            ConstValue::Uint(u) => *u as i32,
+            ConstValue::Int(i) => *i as i32,
+            ConstValue::Char(byte) => *byte as i32,
+            ConstValue::ConstAlias(name) => {
+                if let Some(value) = self.consts.get(name) {
+                    self.eval_const_value(value, depth + 1)
+                } else {
+                    eprintln!("Error [{}#{}]:", self.filename(), self.current_subr_name());
+                    eprintln!("\tUndefined constant `{name}`.");
+                    std::process::exit(1);
+                }
+            }
+            ConstValue::BinOp(x, binop, y) => {
+                let x = self.eval_const_value(x, depth + 1);
+                let y = self.eval_const_value(y, depth + 1);
+                binop.eval(x, y)
+            }
         }
     }
 

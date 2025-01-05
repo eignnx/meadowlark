@@ -30,15 +30,39 @@ Ident: String = <id: r#"\.?_?[a-z][a-zA-Z0-9_.]*"#> => id.to_string();
 // Constants must be all uppercase.
 ConstIdent: String = <id: r#"[A-Z][A-Z0-9_]*"#> => id.to_string();
 
-ConstValue: ConstValue = {
+ConstValueAtomic: ConstValue = {
     <uint: Unsigned> => ConstValue::Uint(uint),
     <int: Signed> => ConstValue::Int(int),
     <char_lit: CharLit> => ConstValue::Char(char_lit),
     <const_alias: ConstIdent> => ConstValue::ConstAlias(const_alias),
-}
+    "(" <value: ConstValue>  ")" => value,
+};
+
+ConstValue: ConstValue = {
+    <first: ConstValueAtomic> <rest: (BinOp ConstValueAtomic)*> => {
+        // We want left associativity and same precedence for all ops.
+        rest.into_iter().fold(first, |lhs, (op, rhs)| {
+            ConstValue::BinOp(Box::new(lhs), op, Box::new(rhs))
+        })
+    }
+};
+
+BinOp: BinOp = {
+    "+" => BinOp::Add,
+    "-" => BinOp::Sub,
+    "*" => BinOp::Mul,
+    "/" => BinOp::Div,
+    "%" => BinOp::Mod,
+    "&" => BinOp::And,
+    "|" => BinOp::Or,
+    "^" => BinOp::Xor,
+    "<<" => BinOp::Shl,
+    ">>" => BinOp::Shr,
+};
+
 
 Item: Item = {
-    "def" <name: ConstIdent> ":" "u16" "=" <value: ConstValue> ";" => Item::Const { name, value },
+    "def" <name: ConstIdent> "=" <value: ConstValue> ";" => Item::Const { name, value },
     <is_isr: SubrOrIsr> <subr_name: Ident> "("
         <args: (AliasBinding ("," <AliasBinding>)*)?>
     ")"
