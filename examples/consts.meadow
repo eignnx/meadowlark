@@ -1,6 +1,6 @@
  # `B` should eval to 207 since ALL ops are left associative
  # and have the same precedence.
-def B = A + 5 * 2 - 3; # = (((A + 5) * 2) - 3)
+def B = A + 5 * 2 - 3; # (((A + 5) * 2) - 3) == 207
 
 subr main() {
     !li $a0, A;

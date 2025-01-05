@@ -1,5 +1,6 @@
 use lalrpop_util::ParseError;
 
+use lark_vm::cpu::regs::Reg;
 use crate::{UserError, ast::*};
 
 grammar;
@@ -344,28 +345,22 @@ Signed: i16 = {
 }
 
 Reg: Reg = {
-    <name: r"\$[a-z]+"> <id: r"[0-9]+"?> => {
-        let name = name[1..].to_string(); // remove the "$" from the name
-        if let Some(id) = id {
-            let id = id.parse().unwrap();
-            match (&name[..], id) {
-                ("a", 0..=2) => Reg::Arg(id),
-                ("s", 0..=2) => Reg::Saved(id),
-                ("t", 0..=2) => Reg::Temp(id),
-                ("k", 0..=1) => Reg::Kernel(id),
-                _ => panic!("unknown register: `${}{}`", name, id),
-            }
-        } else {
-            match &name[..] {
-                "zero" => Reg::Zero,
-                "rv" => Reg::Rv,
-                "ra" => Reg::Ra,
-                "gp" => Reg::Gp,
-                "sp" => Reg::Sp,
-                _ => panic!("unknown register: {}", name),
-            }
-        }
-    }
+    r"\$zero" => Reg::Zero,
+    r"\$rv" => Reg::Rv,
+    r"\$ra" => Reg::Ra,
+    r"\$a0" => Reg::A0,
+    r"\$a1" => Reg::A1,
+    r"\$a2" => Reg::A2,
+    r"\$s0" => Reg::S0,
+    r"\$s1" => Reg::S1,
+    r"\$s2" => Reg::S2,
+    r"\$t0" => Reg::T0,
+    r"\$t1" => Reg::T1,
+    r"\$t2" => Reg::T2,
+    r"\$k0" => Reg::K0,
+    r"\$k1" => Reg::K1,
+    r"\$gp" => Reg::Gp,
+    r"\$sp" => Reg::Sp,
 };
 
 Directive: Directive = {

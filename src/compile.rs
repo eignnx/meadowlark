@@ -2,6 +2,8 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
 use std::path::PathBuf;
 
+use lark_vm::cpu::regs::Reg;
+
 use crate::ast::*;
 
 pub struct CodeGen {
@@ -224,7 +226,7 @@ impl CodeGen {
 
         // Assign argument registers to variables according to the user's choice.
         self.var_aliases.clear();
-        let mut available_argument_registers = BTreeSet::from_iter(Reg::argument_registers());
+        let mut available_argument_registers = BTreeSet::from_iter(Reg::ARGUMENT);
 
         {
             // This is used to build a qualified name for each variable in case it
@@ -284,8 +286,8 @@ impl CodeGen {
                 let qualified_name = name_path.join(".");
 
                 match lvalue {
-                    LValue::Reg(Reg::Arg(a)) => {
-                        let was_available = available_argument_registers.remove(&Reg::Arg(*a));
+                    LValue::Reg(a @ (Reg::A0 | Reg::A1 | Reg::A2)) => {
+                        let was_available = available_argument_registers.remove(a);
                         if was_available {
                             self.var_aliases.insert(qualified_name, lvalue.clone());
                         } else {
@@ -390,18 +392,14 @@ impl CodeGen {
         eprintln!("\t```");
     }
 
-    fn warn_register_already_assigned(&mut self, name: &String, reg_id: u8) {
+    fn warn_register_already_assigned(&mut self, name: &String, reg: Reg) {
         let prev_use = self
             .var_aliases
             .iter()
-            .find_map(|(vname, l)| matches!(l, LValue::Reg(Reg::Arg(_))).then(|| vname))
+            .find_map(|(vname, l)| l.is_arg_reg().then_some(vname))
             .unwrap();
         eprintln!("Warning [{}#{}]:", self.filename(), name);
-        eprintln!(
-            "\tArgument register `{}` already assigned to argument `{}`.",
-            Reg::Arg(reg_id),
-            prev_use,
-        );
+        eprintln!("\tArgument register `{reg}` already assigned to argument `{prev_use}`.");
     }
 
     fn compile_stmt(&mut self, out: &mut dyn io::Write, stmt: &Stmt) -> io::Result<()> {

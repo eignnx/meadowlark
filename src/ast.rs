@@ -1,5 +1,7 @@
 use std::fmt;
 
+use lark_vm::cpu::regs::Reg;
+
 #[derive(Debug)]
 pub enum Item {
     Const {
@@ -64,6 +66,7 @@ pub enum AliasBinding {
     /// Only valid for function arguments. I want users to know which registers
     /// and stack offsets are in use.
     ImplicitAlias(Var),
+
     /// Examples:
     ///    - `local => $s2`
     ///    - `arg => [$sp + 4]`
@@ -134,6 +137,15 @@ pub enum LValue {
         base: Option<Base>,
         offset: Option<Offset>,
     },
+}
+
+impl LValue {
+    pub fn is_arg_reg(&self) -> bool {
+        match self {
+            LValue::Reg(r) => r.is_argument(),
+            _ => false,
+        }
+    }
 }
 
 impl fmt::Display for LValue {
@@ -214,48 +226,48 @@ pub enum RValue {
     LValue(LValue),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Reg {
-    Zero,
-    Rv,
-    Ra,
-    Arg(u8),
-    Saved(u8),
-    Temp(u8),
-    Kernel(u8),
-    Gp,
-    Sp,
-}
+// #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+// pub enum Reg {
+//     Zero,
+//     Rv,
+//     Ra,
+//     Arg(u8),
+//     Saved(u8),
+//     Temp(u8),
+//     Kernel(u8),
+//     Gp,
+//     Sp,
+// }
 
-impl Reg {
-    #[allow(unused)]
-    pub fn is_callee_saved(&self) -> bool {
-        match self {
-            Reg::Ra | Reg::Saved(_) | Reg::Gp | Reg::Sp => true,
-            Reg::Zero | Reg::Rv | Reg::Arg(_) | Reg::Temp(_) | Reg::Kernel(_) => false,
-        }
-    }
+// impl Reg {
+//     #[allow(unused)]
+//     pub fn is_callee_saved(&self) -> bool {
+//         match self {
+//             Reg::Ra | Reg::Saved(_) | Reg::Gp | Reg::Sp => true,
+//             Reg::Zero | Reg::Rv | Reg::Arg(_) | Reg::Temp(_) | Reg::Kernel(_) => false,
+//         }
+//     }
 
-    pub fn argument_registers() -> impl Iterator<Item = Reg> {
-        (0..3).map(Reg::Arg)
-    }
-}
+//     pub fn argument_registers() -> impl Iterator<Item = Reg> {
+//         (0..3).map(Reg::Arg)
+//     }
+// }
 
-impl fmt::Display for Reg {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Reg::Zero => write!(f, "$zero"),
-            Reg::Rv => write!(f, "$rv"),
-            Reg::Ra => write!(f, "$ra"),
-            Reg::Arg(n) => write!(f, "$a{}", n),
-            Reg::Saved(n) => write!(f, "$s{}", n),
-            Reg::Temp(n) => write!(f, "$t{}", n),
-            Reg::Kernel(n) => write!(f, "$k{}", n),
-            Reg::Gp => write!(f, "$gp"),
-            Reg::Sp => write!(f, "$sp"),
-        }
-    }
-}
+// impl fmt::Display for Reg {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         match self {
+//             Reg::Zero => write!(f, "$zero"),
+//             Reg::Rv => write!(f, "$rv"),
+//             Reg::Ra => write!(f, "$ra"),
+//             Reg::Arg(n) => write!(f, "$a{}", n),
+//             Reg::Saved(n) => write!(f, "$s{}", n),
+//             Reg::Temp(n) => write!(f, "$t{}", n),
+//             Reg::Kernel(n) => write!(f, "$k{}", n),
+//             Reg::Gp => write!(f, "$gp"),
+//             Reg::Sp => write!(f, "$sp"),
+//         }
+//     }
+// }
 
 #[derive(Debug, Clone)]
 pub enum Directive {
