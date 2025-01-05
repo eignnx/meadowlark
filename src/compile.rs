@@ -61,6 +61,8 @@ impl CodeGen {
             self.compile_item(out, item)?;
         }
 
+        writeln!(out)?;
+
         for item in &non_consts {
             self.compile_item(out, item)?;
         }
@@ -113,8 +115,8 @@ impl CodeGen {
                     }
                     match d {
                         RValue::Alias(name) => {
-                            if let Some(value) = self.consts.get(name) {
-                                write!(out, "{value}")?;
+                            if self.consts.contains_key(name) {
+                                write!(out, "{name}")?;
                             } else if self.var_aliases.contains_key(name) {
                                 eprintln!(
                                     "Error [{}#{}]:",
@@ -662,8 +664,8 @@ impl CodeGen {
             }
 
             RValue::ConstAlias(name) => {
-                if let Some(value) = self.consts.get(name) {
-                    write!(out, "{value}")
+                if self.consts.contains_key(name) {
+                    write!(out, "{name}")
                 } else {
                     eprintln!("Error [{}#{}]:", self.filename(), self.current_subr_name());
                     eprintln!("\tUndefined constant `{}`.", name);
@@ -682,7 +684,7 @@ impl CodeGen {
                 // This case is a little exceptional. If it looks like the base is a constant,
                 // interpret the constant as an offset from the zero register.
                 if let (Some(Base::Const(base)), None) = (base, offset) {
-                    if let Some(base) = self.consts.get(base) {
+                    if self.consts.contains_key(base) {
                         write!(out, "{base}($zero)")?;
                         return Ok(());
                     }
@@ -692,21 +694,8 @@ impl CodeGen {
                     match offset {
                         Offset::I10(i) => write!(out, "{}", i)?,
                         Offset::Const(name) => {
-                            if let Some(value) = self.consts.get(name) {
-                                if let Ok(cast) = i16::try_from(*value) {
-                                    write!(out, "{cast}", cast = cast)?;
-                                } else {
-                                    eprintln!(
-                                        "Error [{}#{}]:",
-                                        self.filename(),
-                                        self.current_subr_name()
-                                    );
-                                    eprintln!(
-                                        "\tValue of constant `{name}` does not fit in an `i16`."
-                                    );
-                                    std::process::exit(1);
-                                }
-                                write!(out, "{value}")?;
+                            if self.consts.contains_key(name) {
+                                write!(out, "{name}")?;
                             } else {
                                 eprintln!(
                                     "Error [{}#{}]:",
@@ -718,17 +707,8 @@ impl CodeGen {
                             }
                         }
                         Offset::NegatedConst(name) => {
-                            if let Some(&value) = self.consts.get(name) {
-                                let Ok(cast) = i16::try_from(value) else {
-                                    eprintln!(
-                                        "Error [{}#{}]:",
-                                        self.filename(),
-                                        self.current_subr_name()
-                                    );
-                                    eprintln!("\tValue of negated constant `-{name} == {val}` does not fit in an `i16`.", val = -value );
-                                    std::process::exit(1);
-                                };
-                                write!(out, "{negated}", negated = -cast)?;
+                            if self.consts.contains_key(name) {
+                                write!(out, "-{name}")?;
                             } else {
                                 eprintln!(
                                     "Error [{}#{}]:",
@@ -749,15 +729,15 @@ impl CodeGen {
                     match base {
                         Base::Reg(reg) => write!(out, "{reg}")?,
                         Base::Const(name) => {
-                            if let Some(value) = self.consts.get(name) {
-                                write!(out, "{value}")?;
+                            if self.consts.contains_key(name) {
+                                write!(out, "{name}")?;
                             } else {
                                 eprintln!(
                                     "Error [{}#{}]:",
                                     self.filename(),
                                     self.current_subr_name()
                                 );
-                                eprintln!("\tUndefined variable `{name}`.");
+                                eprintln!("\tUndefined constant `{name}`.");
                                 std::process::exit(1);
                             }
                         }
