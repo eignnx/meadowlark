@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
 use std::path::PathBuf;
 
@@ -10,7 +10,7 @@ pub struct CodeGen {
     current_subr: Option<SubrInfo>,
     filename: Option<PathBuf>,
     var_aliases: HashMap<Var, LValue>,
-    consts: BTreeSet<Var>,
+    consts: BTreeMap<Var, i32>,
     string_literal_labels: HashMap<String, String>,
 }
 
@@ -22,7 +22,7 @@ impl CodeGen {
             current_subr: None,
             filename: filename.into(),
             var_aliases: HashMap::new(),
-            consts: BTreeSet::new(),
+            consts: BTreeMap::new(),
             string_literal_labels: HashMap::new(),
         }
     }
@@ -53,7 +53,15 @@ impl CodeGen {
         writeln!(out, "#bank rom")?;
         writeln!(out)?;
 
-        for item in &ast {
+        let (consts, non_consts): (Vec<_>, _) = ast
+            .into_iter()
+            .partition(|item| matches!(item, Item::Const { .. }));
+
+        for item in &consts {
+            self.compile_item(out, item)?;
+        }
+
+        for item in &non_consts {
             self.compile_item(out, item)?;
         }
 
@@ -70,7 +78,13 @@ impl CodeGen {
     fn compile_item(&mut self, out: &mut dyn io::Write, item: &Item) -> io::Result<()> {
         match item {
             Item::Const { name, value } => {
-                self.consts.insert(name.clone());
+                let value = match value {
+                    ConstValue::Uint(u) => *u as i32,
+                    ConstValue::Int(i) => *i as i32,
+                    ConstValue::Char(byte) => *byte as i32,
+                    ConstValue::ConstAlias(name) => self.eval_const_alias(name),
+                };
+                self.consts.insert(name.clone(), value);
                 writeln!(out, "#const {name} = {value}")?;
             }
 
@@ -82,10 +96,13 @@ impl CodeGen {
                 body,
             } => {
                 self.compile_subr_def(out, name, preserve_regs, args, body, *is_isr)?;
+                writeln!(out)?;
+                writeln!(out)?;
             }
 
             Item::Directive(Directive::Addr(addr)) => {
                 writeln!(out, "#addr {}", addr)?;
+                writeln!(out)?;
             }
 
             Item::Directive(Directive::Data(data)) => {
@@ -96,8 +113,8 @@ impl CodeGen {
                     }
                     match d {
                         RValue::Alias(name) => {
-                            if self.consts.contains(name) {
-                                write!(out, "{name}")?;
+                            if let Some(value) = self.consts.get(name) {
+                                write!(out, "{value}")?;
                             } else if self.var_aliases.contains_key(name) {
                                 eprintln!(
                                     "Error [{}#{}]:",
@@ -128,10 +145,17 @@ impl CodeGen {
             }
         }
 
-        // Space out the items.
-        writeln!(out)?;
-
         Ok(())
+    }
+
+    fn eval_const_alias(&self, name: &Var) -> i32 {
+        if let Some(value) = self.consts.get(name) {
+            *value
+        } else {
+            eprintln!("Error [{}#{}]:", self.filename(), self.current_subr_name());
+            eprintln!("\tUndefined constant `{name}`.");
+            std::process::exit(1);
+        }
     }
 
     fn compile_subr_def(
@@ -630,12 +654,19 @@ impl CodeGen {
             RValue::Alias(name) => {
                 if let Some(resolved) = self.var_aliases.get(name) {
                     self.compile_instr_lvalue(out, &resolved.clone())
-                } else if self.consts.contains(name) {
-                    // `customasm` will handle interpolating this constant later.
-                    write!(out, "{name}")
                 } else {
                     eprintln!("Error [{}#{}]:", self.filename(), self.current_subr_name());
-                    eprintln!("\tUndefined variable `{}`.", name);
+                    eprintln!("\tUndefined alias `{}`.", name);
+                    std::process::exit(1);
+                }
+            }
+
+            RValue::ConstAlias(name) => {
+                if let Some(value) = self.consts.get(name) {
+                    write!(out, "{value}")
+                } else {
+                    eprintln!("Error [{}#{}]:", self.filename(), self.current_subr_name());
+                    eprintln!("\tUndefined constant `{}`.", name);
                     std::process::exit(1);
                 }
             }
@@ -650,8 +681,8 @@ impl CodeGen {
             LValue::Indirection { base, offset } => {
                 // This case is a little exceptional. If it looks like the base is a constant,
                 // interpret the constant as an offset from the zero register.
-                if let (Some(Base::AliasOrConst(base)), None) = (base, offset) {
-                    if self.consts.contains(base) {
+                if let (Some(Base::Const(base)), None) = (base, offset) {
+                    if let Some(base) = self.consts.get(base) {
                         write!(out, "{base}($zero)")?;
                         return Ok(());
                     }
@@ -661,8 +692,21 @@ impl CodeGen {
                     match offset {
                         Offset::I10(i) => write!(out, "{}", i)?,
                         Offset::Const(name) => {
-                            if self.consts.contains(name) {
-                                write!(out, "{name}")?;
+                            if let Some(value) = self.consts.get(name) {
+                                if let Ok(cast) = i16::try_from(*value) {
+                                    write!(out, "{cast}", cast = cast)?;
+                                } else {
+                                    eprintln!(
+                                        "Error [{}#{}]:",
+                                        self.filename(),
+                                        self.current_subr_name()
+                                    );
+                                    eprintln!(
+                                        "\tValue of constant `{name}` does not fit in an `i16`."
+                                    );
+                                    std::process::exit(1);
+                                }
+                                write!(out, "{value}")?;
                             } else {
                                 eprintln!(
                                     "Error [{}#{}]:",
@@ -674,8 +718,17 @@ impl CodeGen {
                             }
                         }
                         Offset::NegatedConst(name) => {
-                            if self.consts.contains(name) {
-                                write!(out, "-{name}")?;
+                            if let Some(&value) = self.consts.get(name) {
+                                let Ok(cast) = i16::try_from(value) else {
+                                    eprintln!(
+                                        "Error [{}#{}]:",
+                                        self.filename(),
+                                        self.current_subr_name()
+                                    );
+                                    eprintln!("\tValue of negated constant `-{name} == {val}` does not fit in an `i16`.", val = -value );
+                                    std::process::exit(1);
+                                };
+                                write!(out, "{negated}", negated = -cast)?;
                             } else {
                                 eprintln!(
                                     "Error [{}#{}]:",
@@ -695,11 +748,9 @@ impl CodeGen {
                 if let Some(base) = base {
                     match base {
                         Base::Reg(reg) => write!(out, "{reg}")?,
-                        Base::AliasOrConst(name) => {
-                            if self.consts.contains(name) {
-                                write!(out, "{name}")?;
-                            } else if let Some(resolved) = self.var_aliases.get(name) {
-                                self.compile_instr_lvalue(out, &resolved.clone())?;
+                        Base::Const(name) => {
+                            if let Some(value) = self.consts.get(name) {
+                                write!(out, "{value}")?;
                             } else {
                                 eprintln!(
                                     "Error [{}#{}]:",
@@ -707,6 +758,19 @@ impl CodeGen {
                                     self.current_subr_name()
                                 );
                                 eprintln!("\tUndefined variable `{name}`.");
+                                std::process::exit(1);
+                            }
+                        }
+                        Base::Alias(name) => {
+                            if let Some(resolved) = self.var_aliases.get(name) {
+                                self.compile_instr_lvalue(out, &resolved.clone())?;
+                            } else {
+                                eprintln!(
+                                    "Error [{}#{}]:",
+                                    self.filename(),
+                                    self.current_subr_name()
+                                );
+                                eprintln!("\tUndefined alias `{name}`.");
                                 std::process::exit(1);
                             }
                         }

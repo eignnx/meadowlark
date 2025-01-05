@@ -1,20 +1,6 @@
 use lalrpop_util::ParseError;
 
-use crate::{
-    UserError,
-    ast::{
-        Item,
-        AliasBinding,
-        LValue,
-        Stmt,
-        Instr,
-        RValue,
-        Reg,
-        Directive,
-        Offset,
-        Base,
-    }
-};
+use crate::{UserError, ast::*};
 
 grammar;
 
@@ -39,9 +25,21 @@ SubrOrIsr: bool = {
     "isr" => true,
 };
 
+// Regular identifiers must begin with a lowercase letter (optionally preceded by a dot).
+Ident: String = <id: r#"\.?_?[a-z][a-zA-Z0-9_.]*"#> => id.to_string();
+// Constants must be all uppercase.
+ConstIdent: String = <id: r#"[A-Z][A-Z0-9_]*"#> => id.to_string();
+
+ConstValue: ConstValue = {
+    <uint: Unsigned> => ConstValue::Uint(uint),
+    <int: Signed> => ConstValue::Int(int),
+    <char_lit: CharLit> => ConstValue::Char(char_lit),
+    <const_alias: ConstIdent> => ConstValue::ConstAlias(const_alias),
+}
+
 Item: Item = {
-    "def" <name: LabelIdent> ":" "u16" "=" <value: Unsigned> ";" => Item::Const { name, value },
-    <is_isr: SubrOrIsr> <subr_name: LabelIdent> "("
+    "def" <name: ConstIdent> ":" "u16" "=" <value: ConstValue> ";" => Item::Const { name, value },
+    <is_isr: SubrOrIsr> <subr_name: Ident> "("
         <args: (AliasBinding ("," <AliasBinding>)*)?>
     ")"
     <save_regs: ("preserve" "("
@@ -79,19 +77,19 @@ Stmt: Stmt = {
     },
     "alias" <binding: AliasBinding> ";" => Stmt::DefAlias(binding),
     <instr: Instr> ";" => Stmt::Instr(instr),
-    <label: LabelIdent> ":" => Stmt::Label(label.to_string()),
+    <label: Ident> ":" => Stmt::Label(label.to_string()),
     <if_stmt: IfStmt> => if_stmt,
     <while_loop: WhileLoop> => while_loop,
     "loop" "{" <body: Stmt*> "}" => Stmt::Loop { body },
 };
 
 AliasBinding: AliasBinding = {
-    <name: LabelIdent> "=>" <lvalue: LValue> => AliasBinding::ExplicitAlias(name.to_string(), lvalue),
-    <name: LabelIdent> "=>" "{" <field_bindings: (<AliasBinding> ";")*> "}" => AliasBinding::Struct {
+    <name: Ident> "=>" <lvalue: LValue> => AliasBinding::ExplicitAlias(name.to_string(), lvalue),
+    <name: Ident> "=>" "{" <field_bindings: (<AliasBinding> ";")*> "}" => AliasBinding::Struct {
         var_name: name.to_string(),
         field_bindings,
     },
-    <name: LabelIdent> => AliasBinding::ImplicitAlias(name.to_string()),
+    <name: Ident> => AliasBinding::ImplicitAlias(name.to_string()),
 };
 
 IfStmt: Stmt = {
@@ -169,22 +167,22 @@ Instr: Instr = {
     },
 };
 
-LabelIdent: String = <id: r#"[a-zA-Z_.][a-zA-Z0-9_.]*"#> => id.to_string();
 OpName: String = <op: r"![a-z]+"> => op[1..].to_string();
 
 RValue: RValue = {
     <imm: Integer> => imm,
-    <char_literal: CharLit> => char_literal,
+    <char_literal: CharLit> => RValue::Char(char_literal),
     <string_literal: r#""[^"]*""#> => {
         RValue::String(string_literal[1..string_literal.len()-1].to_string())
     },
-    r"&" <label: LabelIdent> => RValue::Label(label.to_string()),
-    <var_name: LabelIdent> => RValue::Alias(var_name.to_string()),
+    r"&" <label: Ident> => RValue::Label(label.to_string()),
+    <alias_name: Ident> => RValue::Alias(alias_name.to_string()),
+    <const_name: ConstIdent> => RValue::ConstAlias(const_name.to_string()),
     <lvalue: LValue> => RValue::LValue(lvalue),
 };
 
-CharLit: RValue = {
-    <l: @L> <char_content: r"'[^']+'"> <r: @R> =>? Ok(RValue::Char(
+CharLit: u8 = {
+    <l: @L> <char_content: r"'[^']+'"> <r: @R> =>? Ok(
         match &char_content[1..char_content.len()-1] {
             r"\n" => b'\n',
             r"\t" => b'\t',
@@ -210,7 +208,7 @@ CharLit: RValue = {
                 }
             ),
         }
-    )),
+    ),
 };
 
 LValue: LValue = {
@@ -231,7 +229,8 @@ LValue: LValue = {
 
 Base: Base = {
     <reg: Reg> => Base::Reg(reg),
-    <name: LabelIdent> => Base::AliasOrConst(name),
+    <alias_name: Ident> => Base::Alias(alias_name),
+    <const_name: ConstIdent> => Base::Const(const_name),
 };
 
 Offset: Offset = {
@@ -247,13 +246,8 @@ Offset: Offset = {
             })
         }
     },
-    "+" <konst: LabelIdent> => Offset::Const(konst),
-    "-" <konst: LabelIdent> => Offset::NegatedConst(konst),
-};
-
-UintOrConst: RValue = {
-    <uint: Unsigned> => RValue::Uint(uint),
-    <const_name: LabelIdent> => RValue::Alias(const_name),
+    "+" <konst: ConstIdent> => Offset::Const(konst),
+    "-" <konst: ConstIdent> => Offset::NegatedConst(konst),
 };
 
 Integer: RValue = {

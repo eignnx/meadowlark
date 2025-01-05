@@ -12,6 +12,7 @@ use crate::parse_lark::Token;
 pub mod ast;
 pub mod cli;
 pub mod compile;
+pub mod liveness;
 lalrpop_mod!(pub parse_lark);
 
 pub enum CompilationErr {

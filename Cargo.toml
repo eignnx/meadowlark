@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 lalrpop-util = { version = "0.20.0", features = ["lexer", "unicode"] }
 clap = { version = "4.4.17", features = ["derive"] }
+lark-vm = { path = "../lark-vm" }
 
 # Add a build-time dependency on the lalrpop library:
 [build-dependencies]

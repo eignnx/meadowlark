@@ -1,0 +1,7 @@
+def A: u16 = 0x0000;
+def B: u16 = A;
+
+subr main() {
+    !li $a0, A;
+    !li $a1, B;
+}

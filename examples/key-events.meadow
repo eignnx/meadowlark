@@ -3,20 +3,20 @@ subr _start() {
     !j &main;
 }
 
-def slot__ILL_INSTR: u16 = 0xFFFE;
-def slot__KEY_EVENT: u16 = 0xFFFA;
+def SLOT__ILL_INSTR: u16 = 0xFFFE;
+def SLOT__KEY_EVENT: u16 = 0xFFFA;
 
 subr boot() preserve ($ra) {
     alias vec_slot => $t0;
     alias isr_ptr => $t1;
 
     # Setup ILL_INSTR handler
-    !li vec_slot, slot__ILL_INSTR; # Slot in interrupt vector
+    !li vec_slot, SLOT__ILL_INSTR; # Slot in interrupt vector
     !li isr_ptr, &handle_ILL_INSTR; # Function pointer of handler
     !sw [vec_slot], isr_ptr;
 
     # Setup KEY_EVENT handler
-    !li vec_slot, slot__KEY_EVENT;
+    !li vec_slot, SLOT__KEY_EVENT;
     !li isr_ptr, &handle_KEY_EVENT;
     !sw [vec_slot], isr_ptr;
 

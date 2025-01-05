@@ -4,7 +4,7 @@ use std::fmt;
 pub enum Item {
     Const {
         name: String,
-        value: u16,
+        value: ConstValue,
     },
     /// `subr` is "subroutine".
     SubrDef {
@@ -16,6 +16,14 @@ pub enum Item {
         body: Vec<Stmt>,
     },
     Directive(Directive),
+}
+
+#[derive(Debug)]
+pub enum ConstValue {
+    Uint(u16),
+    Int(i16),
+    Char(u8),
+    ConstAlias(Var),
 }
 
 #[derive(Debug)]
@@ -43,7 +51,8 @@ pub enum AliasBinding {
 #[derive(Debug, Clone)]
 pub enum Base {
     Reg(Reg),
-    AliasOrConst(Var),
+    Alias(Var),
+    Const(Var),
 }
 
 impl fmt::Display for Offset {
@@ -67,7 +76,8 @@ impl fmt::Display for Base {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Base::Reg(reg) => write!(f, "{}", reg),
-            Base::AliasOrConst(var) => write!(f, "{}", var),
+            Base::Alias(var) => write!(f, "{}", var),
+            Base::Const(var) => write!(f, "{}", var),
         }
     }
 }
@@ -162,6 +172,9 @@ pub enum RValue {
 
     /// Example: `@some_label`
     Label(String),
+
+    /// Example: `MY_CONST`
+    ConstAlias(Var),
 
     /// Example: `some_arg`
     Alias(Var),
