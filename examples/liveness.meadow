@@ -1,0 +1,75 @@
+subr blah(x, y) {
+    alias   a => $t0;
+    alias   b => $t1;
+
+    !mv     a, x;
+    !add    b, a, y;
+
+    alias   c => $t0;
+    !mv     c, a; # No conflict.
+    # !mv     c, a; # Conflict! `a` is no longer live.
+    !add    c, x, b; # No conflict.
+}
+
+
+# int foo(int n) {
+#     int z = 10;
+#     int x = 0;
+#     int y = 1;
+#     while (x < n) {
+#         z = x * 2 + y;
+#         x++;
+#         y = x + z;
+#     }
+#     return y;
+# }
+subr foo(n => $a0) {
+    alias   z => $t0;
+    alias   x => $t1;
+    alias   y => $t2;
+    alias   cond => $t0;
+
+    !li     z, 10;
+    !li     x, 0;
+    !li     y, 1;
+
+    while cond (
+        !tlt    cond, x, n;
+    ) do {
+        alias   tmp => $t0;
+        !li     tmp, 2;
+        !shl    z, x, tmp;
+        !add    z, z, y;
+        !addi   x, x, 1;
+        !add    y, x, z;
+    }
+
+    !mv     $rv, y;
+    !jr     $ra;
+}
+
+subr foo_compiled(n => $a0) {
+    alias   z => $t0;
+    alias   x => $t1;
+    alias   y => $t2;
+    alias   cond => $t0;
+
+    !li     z, 10;
+    !li     x, 0;
+    !li     y, 1;
+
+    loop_top:
+    !tlt    cond, x, n;
+    !bf     cond, &loop_end;
+    alias   tmp => $t0;
+    !li     tmp, 2;
+    !shl    z, x, tmp;
+    !add    z, z, y;
+    !addi   x, x, 1;
+    !add    y, x, z;
+    !j      &loop_top;;
+    loop_end:
+
+    !mv     $rv, y;
+    !jr     $ra;
+}
