@@ -1,5 +1,5 @@
 use core::fmt;
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap};
 
 use lark_vm::cpu::{
     instr::{
@@ -14,7 +14,7 @@ use lark_vm::cpu::{
 /// These will only be used for intra-procedural analysis (within one subroutine), so hopefully
 /// `$sp` and `$gp` can be assumed to be constant throughout.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum StgLoc {
+pub enum StgLoc {
     Reg(Reg),
 
     /// A (possibly unbound) alias to another storage location.
@@ -60,23 +60,6 @@ impl From<Reg> for StgLoc {
 }
 
 type AsmInstr = instr::Instr<StgLoc, i32>;
-
-#[derive(Debug, Clone)]
-enum AsmStmt {
-    Instr(AsmInstr),
-    Label(String),
-}
-
-impl AsmStmt {
-    fn defs_and_uses(&self, defs: &mut Vec<StgLoc>, uses: &mut Vec<StgLoc>) {
-        match self {
-            AsmStmt::Instr(instr) => {
-                defs_and_uses(instr, defs, uses);
-            }
-            AsmStmt::Label(_) => {}
-        }
-    }
-}
 
 /// - `defs` are storage locations that would be overwritten by the instruction `self`.
 /// - `uses` are storage locations that would need to be read from by the instruction `self`.
@@ -206,10 +189,10 @@ fn defs_and_uses(instr: &AsmInstr, defs: &mut impl Extend<StgLoc>, uses: &mut im
     }
 }
 
-type NodeId = usize;
+pub type NodeId = usize;
 
 /// Control Flow Graph
-struct Cfg {
+pub struct Cfg {
     stmts: Vec<AsmInstr>,
     edges: BTreeSet<(NodeId, NodeId)>,
     entry: NodeId,
@@ -219,7 +202,7 @@ struct Cfg {
 }
 
 impl Cfg {
-    fn new(stmts: Vec<AsmInstr>) -> Self {
+    pub fn new(stmts: Vec<AsmInstr>) -> Self {
         Self {
             stmts,
             edges: BTreeSet::new(),
@@ -230,22 +213,22 @@ impl Cfg {
         }
     }
 
-    fn with_edges(mut self, edges: impl Iterator<Item = (NodeId, NodeId)>) -> Self {
+    pub fn with_edges(mut self, edges: impl Iterator<Item = (NodeId, NodeId)>) -> Self {
         self.edges.extend(edges);
         self
     }
 
-    fn with_entry(mut self, entry: NodeId) -> Self {
+    pub fn with_entry(mut self, entry: NodeId) -> Self {
         self.entry = entry;
         self
     }
 
-    fn with_exits(mut self, exits: impl IntoIterator<Item = NodeId>) -> Self {
+    pub fn with_exits(mut self, exits: impl IntoIterator<Item = NodeId>) -> Self {
         self.exits.extend(exits);
         self
     }
 
-    fn set_non_void_subr(mut self) -> Self {
+    pub fn set_non_void_subr(mut self) -> Self {
         for exit_id in self.exits.iter() {
             self.live_outs_on_exit.insert(StgLoc::Reg(Reg::Rv));
         }
@@ -258,13 +241,7 @@ impl Cfg {
             .filter_map(move |(from, to)| if *from == node_id { Some(*to) } else { None })
     }
 
-    fn predecessors(&self, node_id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
-        self.edges
-            .iter()
-            .filter_map(move |(from, to)| if *to == node_id { Some(*from) } else { None })
-    }
-
-    fn compute_live_ins_live_outs(
+    pub fn compute_live_ins_live_outs(
         &self,
     ) -> (
         HashMap<NodeId, BTreeSet<StgLoc>>,
