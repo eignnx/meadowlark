@@ -13,7 +13,7 @@ use lark_vm::cpu::{
 ///
 /// These will only be used for intra-procedural analysis (within one subroutine), so hopefully
 /// `$sp` and `$gp` can be assumed to be constant throughout.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum StgLoc {
     Reg(Reg),
 
@@ -229,9 +229,7 @@ impl Cfg {
     }
 
     pub fn set_non_void_subr(mut self) -> Self {
-        for exit_id in self.exits.iter() {
-            self.live_outs_on_exit.insert(StgLoc::Reg(Reg::Rv));
-        }
+        self.live_outs_on_exit.insert(StgLoc::Reg(Reg::Rv));
         self
     }
 
@@ -468,5 +466,64 @@ fn live_ins_live_outs() {
             .join(", ");
         println!("outs:\t{{{outs}}}",);
         println!();
+    }
+
+    println!("================================");
+
+    let interferences = Interferences::from_live_sets(&cfg.stmts, live_outs);
+
+    for (a, bs) in interferences.edges.iter() {
+        println!(
+            "{a} -> [{}]",
+            bs.iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
+}
+
+#[derive(Default)]
+pub struct Interferences {
+    edges: HashMap<StgLoc, BTreeSet<StgLoc>>,
+}
+
+impl Interferences {
+    pub fn interferes_with(&self, a: &StgLoc, b: &StgLoc) -> bool {
+        self.edges
+            .get(a)
+            .map(|set| set.contains(b))
+            .unwrap_or(false)
+            || self
+                .edges
+                .get(b)
+                .map(|set| set.contains(a))
+                .unwrap_or(false)
+    }
+
+    pub fn from_live_sets(
+        instrs: &[AsmInstr],
+        live_outs: HashMap<NodeId, BTreeSet<StgLoc>>,
+    ) -> Self {
+        let mut edges: HashMap<_, BTreeSet<StgLoc>> = HashMap::new();
+
+        let mut defs_buf = BTreeSet::new();
+        let mut uses_buf = BTreeSet::new();
+
+        for (id, instr) in instrs.iter().enumerate() {
+            defs_buf.clear();
+            uses_buf.clear();
+            defs_and_uses(instr, &mut defs_buf, &mut uses_buf);
+
+            for def in defs_buf.iter() {
+                for out in live_outs.get(&id).map(|set| set.iter()).unwrap_or_default() {
+                    if def != out {
+                        edges.entry(def.clone()).or_default().insert(out.clone());
+                    }
+                }
+            }
+        }
+
+        Self { edges }
     }
 }
