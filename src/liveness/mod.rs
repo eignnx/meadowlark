@@ -288,30 +288,6 @@ impl Cfg {
         loop {
             let changed = self.update_live_sets(&mut live_ins, &mut live_outs);
 
-            for (id, instr) in self.stmts.iter().enumerate() {
-                let ins = live_ins
-                    .get(&id)
-                    .cloned()
-                    .unwrap_or_default()
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                println!("ins:\t{{{ins}}}");
-                println!("{id:03}:\t{}", instr);
-                let outs = live_outs
-                    .get(&id)
-                    .cloned()
-                    .unwrap_or_default()
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                println!("outs:\t{{{outs}}}",);
-                println!();
-            }
-            eprintln!("-------------------------------------------------------------------");
-
             if !changed {
                 break;
             }
@@ -399,7 +375,7 @@ fn live_ins_live_outs() {
         !add    z, z, y;
         !addi   x, x, 1;
         !add    y, x, z;
-        !j      &loop_top;;
+        !j      &loop_top;
         loop_end:
 
         !mv     $rv, y;
