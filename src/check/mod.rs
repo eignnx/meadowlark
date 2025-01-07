@@ -1,275 +1,17 @@
-use std::collections::{BTreeSet, HashMap};
-
+pub mod cfg;
+pub mod check_instr;
+pub mod interferences;
 pub mod stg_loc;
-
-use lark_vm::cpu::{
-    instr::{
-        self, Instr, OpcodeAddr, OpcodeImm, OpcodeOp, OpcodeReg, OpcodeRegImm, OpcodeRegReg,
-        OpcodeRegRegImm, OpcodeRegRegReg,
-    },
-    regs::Reg,
-};
-use stg_loc::StgLoc;
-
-type AsmInstr = instr::Instr<StgLoc, i32>;
-
-/// - `defs` are storage locations that would be overwritten by the instruction `self`.
-/// - `uses` are storage locations that would need to be read from by the instruction `self`.
-fn defs_and_uses(instr: &AsmInstr, defs: &mut impl Extend<StgLoc>, uses: &mut impl Extend<StgLoc>) {
-    match instr {
-        Instr::O { opcode } => match opcode {
-            OpcodeOp::HALT | OpcodeOp::NOP | OpcodeOp::INRE | OpcodeOp::INRD | OpcodeOp::KRET => {}
-        },
-
-        Instr::A { opcode, offset: _ } => match opcode {
-            OpcodeAddr::J => {}
-        },
-
-        Instr::I { opcode, imm10: _ } => match opcode {
-            OpcodeImm::EXN | OpcodeImm::KCALL => {}
-        },
-
-        Instr::R { opcode, reg } => match opcode {
-            OpcodeReg::JR => uses.extend([reg.clone()]),
-            OpcodeReg::MVLO | OpcodeReg::MVHI => defs.extend([reg.clone()]),
-        },
-
-        Instr::RI {
-            opcode,
-            reg,
-            imm: _,
-        } => match opcode {
-            OpcodeRegImm::JAL => {
-                let link_reg = reg;
-                defs.extend([link_reg.clone()]);
-                defs.extend(Reg::CALLER_SAVED.iter().map(|&r| r.into()));
-            }
-            OpcodeRegImm::LI => defs.extend([reg.clone()]),
-            OpcodeRegImm::BT | OpcodeRegImm::BF => uses.extend([reg.clone()]),
-        },
-
-        Instr::RR { opcode, reg1, reg2 } => match opcode {
-            OpcodeRegReg::JRAL => {
-                let (link_reg, jump_addr_reg) = (reg1, reg2);
-
-                defs.extend([link_reg.clone()]);
-                defs.extend(Reg::CALLER_SAVED.iter().map(|&r| r.into()));
-
-                uses.extend([jump_addr_reg.clone()]);
-            }
-            OpcodeRegReg::MV
-            | OpcodeRegReg::NOT
-            | OpcodeRegReg::NEG
-            | OpcodeRegReg::SEB
-            | OpcodeRegReg::TEZ
-            | OpcodeRegReg::TNZ => {
-                let (rd, rs) = (reg1, reg2);
-                defs.extend([rd.clone()]);
-                uses.extend([rs.clone()]);
-            }
-            OpcodeRegReg::MUL | OpcodeRegReg::MULU | OpcodeRegReg::DIV | OpcodeRegReg::DIVU => {
-                todo!("How to handle $LO/$HI regs?")
-            }
-        },
-
-        Instr::RRR {
-            opcode,
-            reg1: rd,
-            reg2: rs,
-            reg3: rt,
-        } => match opcode {
-            OpcodeRegRegReg::ADD
-            | OpcodeRegRegReg::SUB
-            | OpcodeRegRegReg::OR
-            | OpcodeRegRegReg::XOR
-            | OpcodeRegRegReg::AND
-            | OpcodeRegRegReg::ADDU
-            | OpcodeRegRegReg::SUBU
-            | OpcodeRegRegReg::SHL
-            | OpcodeRegRegReg::SHR
-            | OpcodeRegRegReg::SHRA
-            | OpcodeRegRegReg::TLT
-            | OpcodeRegRegReg::TGE
-            | OpcodeRegRegReg::TEQ
-            | OpcodeRegRegReg::TNE
-            | OpcodeRegRegReg::TLTU
-            | OpcodeRegRegReg::TGEU => {
-                defs.extend([rd.clone()]);
-                uses.extend([rs.clone(), rt.clone()]);
-            }
-        },
-
-        Instr::RRI {
-            opcode,
-            reg1,
-            reg2,
-            imm10,
-        } => match opcode {
-            OpcodeRegRegImm::LW | OpcodeRegRegImm::LBS | OpcodeRegRegImm::LBU => {
-                let (rd, src_addr_reg) = (reg1, reg2);
-                defs.extend([rd.clone()]);
-
-                match src_addr_reg.clone().try_into() {
-                    Ok(Reg::Sp) => {
-                        uses.extend([src_addr_reg.clone(), StgLoc::Stack(*imm10)]);
-                    }
-                    Ok(Reg::Gp) => {
-                        uses.extend([src_addr_reg.clone(), StgLoc::Global(*imm10)]);
-                    }
-                    _ => uses.extend([src_addr_reg.clone()]),
-                }
-            }
-            OpcodeRegRegImm::SW | OpcodeRegRegImm::SB => {
-                let (dest_addr_reg, rs) = (reg1, reg2);
-                uses.extend([dest_addr_reg.clone(), rs.clone()]);
-                match dest_addr_reg.clone().try_into() {
-                    Ok(Reg::Sp) => defs.extend([StgLoc::Stack(*imm10)]),
-                    Ok(Reg::Gp) => defs.extend([StgLoc::Global(*imm10)]),
-                    _ => {}
-                }
-            }
-            OpcodeRegRegImm::ADDI
-            | OpcodeRegRegImm::SUBI
-            | OpcodeRegRegImm::ORI
-            | OpcodeRegRegImm::XORI
-            | OpcodeRegRegImm::ANDI => {
-                let (rd, rs) = (reg1, reg2);
-                defs.extend([rd.clone()]);
-                uses.extend([rs.clone()]);
-            }
-        },
-    }
-}
-
-pub type NodeId = usize;
-
-/// Control Flow Graph
-pub struct Cfg {
-    stmts: Vec<AsmInstr>,
-    edges: BTreeSet<(NodeId, NodeId)>,
-    entry: NodeId,
-    exits: BTreeSet<NodeId>,
-    live_ins_on_entry: BTreeSet<StgLoc>,
-    live_outs_on_exit: BTreeSet<StgLoc>,
-}
-
-impl Cfg {
-    pub fn new(stmts: Vec<AsmInstr>) -> Self {
-        Self {
-            stmts,
-            edges: BTreeSet::new(),
-            entry: 0,
-            exits: BTreeSet::new(),
-            live_ins_on_entry: [Reg::Ra.into()].into(),
-            live_outs_on_exit: [Reg::Ra.into()].into(),
-        }
-    }
-
-    pub fn with_edges(mut self, edges: impl Iterator<Item = (NodeId, NodeId)>) -> Self {
-        self.edges.extend(edges);
-        self
-    }
-
-    pub fn with_entry(mut self, entry: NodeId) -> Self {
-        self.entry = entry;
-        self
-    }
-
-    pub fn with_exits(mut self, exits: impl IntoIterator<Item = NodeId>) -> Self {
-        self.exits.extend(exits);
-        self
-    }
-
-    pub fn set_non_void_subr(mut self) -> Self {
-        self.live_outs_on_exit.insert(StgLoc::Reg(Reg::Rv));
-        self
-    }
-
-    fn successors(&self, node_id: NodeId) -> impl Iterator<Item = NodeId> + '_ {
-        self.edges
-            .iter()
-            .filter_map(move |(from, to)| if *from == node_id { Some(*to) } else { None })
-    }
-
-    pub fn compute_live_ins_live_outs(
-        &self,
-    ) -> (
-        HashMap<NodeId, BTreeSet<StgLoc>>,
-        HashMap<NodeId, BTreeSet<StgLoc>>,
-    ) {
-        let mut live_ins: HashMap<NodeId, BTreeSet<StgLoc>> = HashMap::new();
-        let mut live_outs: HashMap<NodeId, BTreeSet<StgLoc>> = HashMap::new();
-
-        for exit_id in self.exits.iter() {
-            live_outs
-                .entry(*exit_id)
-                .or_default()
-                .extend(self.live_outs_on_exit.iter().cloned());
-        }
-
-        live_ins
-            .entry(self.entry)
-            .or_default()
-            .extend(self.live_ins_on_entry.iter().cloned());
-
-        loop {
-            let changed = self.update_live_sets(&mut live_ins, &mut live_outs);
-
-            if !changed {
-                break;
-            }
-        }
-
-        (live_ins, live_outs)
-    }
-
-    fn update_live_sets(
-        &self,
-        live_ins: &mut HashMap<usize, BTreeSet<StgLoc>>,
-        live_outs: &mut HashMap<usize, BTreeSet<StgLoc>>,
-    ) -> bool {
-        let mut changed = false;
-        let mut defs_buf = BTreeSet::new();
-        let mut uses_buf = BTreeSet::new();
-
-        for (id, instr) in self.stmts.iter().enumerate().rev() {
-            defs_buf.clear();
-            uses_buf.clear();
-            defs_and_uses(instr, &mut defs_buf, &mut uses_buf);
-
-            let outs: &mut BTreeSet<StgLoc> = live_outs.entry(id).or_default();
-
-            // Outs[id] = forall successors of id called succ_id: Union(Ins[succ_id])
-            for succ_id in self.successors(id) {
-                let succ_ins = live_ins.entry(succ_id).or_default().clone();
-                for in_ in succ_ins {
-                    changed |= outs.insert(in_.clone());
-                }
-            }
-
-            let ins: &mut BTreeSet<StgLoc> = live_ins.entry(id).or_default();
-
-            // Ins[id] = Uses[id] U (Outs[id] - Defs[id])
-            for use_ in uses_buf.iter().cloned() {
-                changed |= ins.insert(use_);
-            }
-
-            let outs_minus_defs = outs
-                .clone()
-                .difference(&defs_buf)
-                .cloned()
-                .collect::<Vec<_>>();
-
-            for out in outs_minus_defs {
-                changed |= ins.insert(out);
-            }
-        }
-        changed
-    }
-}
 
 #[test]
 fn live_ins_live_outs() {
+    use lark_vm::cpu::{instr::ops::*, regs::Reg};
+
+    use cfg::Cfg;
+    use check_instr::CheckInstr;
+    use interferences::Interferences;
+    use stg_loc::StgLoc;
+
     /*
     int foo(int n) {
         int z = 10;
@@ -311,74 +53,74 @@ fn live_ins_live_outs() {
     */
 
     let stmts = vec![
-        AsmInstr::RI {
+        CheckInstr::RI {
             opcode: OpcodeRegImm::LI,
             reg: StgLoc::Alias("z".to_string()),
             imm: 10,
         },
-        AsmInstr::RI {
+        CheckInstr::RI {
             opcode: OpcodeRegImm::LI,
             reg: StgLoc::Alias("x".to_string()),
             imm: 0,
         },
-        AsmInstr::RI {
+        CheckInstr::RI {
             opcode: OpcodeRegImm::LI,
             reg: StgLoc::Alias("y".to_string()),
             imm: 1,
         },
         // LOOP_TOP (index 3)
-        AsmInstr::RRR {
+        CheckInstr::RRR {
             opcode: OpcodeRegRegReg::TLT,
             reg1: StgLoc::Alias("cond".to_string()),
             reg2: StgLoc::Alias("x".to_string()),
             reg3: StgLoc::Alias("n".to_string()),
         },
         // Index 4
-        AsmInstr::RI {
+        CheckInstr::RI {
             opcode: OpcodeRegImm::BF,
             reg: StgLoc::Alias("cond".to_string()),
             imm: 700, // Imm is irrelevant in this example
         },
-        AsmInstr::RI {
+        CheckInstr::RI {
             opcode: OpcodeRegImm::LI,
             reg: StgLoc::Alias("tmp".to_string()),
             imm: 2,
         },
-        AsmInstr::RRR {
+        CheckInstr::RRR {
             opcode: OpcodeRegRegReg::SHL,
             reg1: StgLoc::Alias("z".to_string()),
             reg2: StgLoc::Alias("x".to_string()),
             reg3: StgLoc::Alias("tmp".to_string()),
         },
-        AsmInstr::RRR {
+        CheckInstr::RRR {
             opcode: OpcodeRegRegReg::ADD,
             reg1: StgLoc::Alias("z".to_string()),
             reg2: StgLoc::Alias("z".to_string()),
             reg3: StgLoc::Alias("y".to_string()),
         },
-        AsmInstr::RRI {
+        CheckInstr::RRI {
             opcode: OpcodeRegRegImm::ADDI,
             reg1: StgLoc::Alias("x".to_string()),
             reg2: StgLoc::Alias("x".to_string()),
             imm10: 1,
         },
-        AsmInstr::RRR {
+        CheckInstr::RRR {
             opcode: OpcodeRegRegReg::ADD,
             reg1: StgLoc::Alias("y".to_string()),
             reg2: StgLoc::Alias("x".to_string()),
             reg3: StgLoc::Alias("z".to_string()),
         },
-        AsmInstr::A {
+        CheckInstr::A {
             opcode: OpcodeAddr::J,
             offset: 3,
         },
         // LOOP_END (index 11)
-        AsmInstr::RR {
+        CheckInstr::RR {
             opcode: OpcodeRegReg::MV,
             reg1: StgLoc::Reg(Reg::Rv),
             reg2: StgLoc::Alias("y".to_string()),
         },
-        AsmInstr::R {
+        CheckInstr::R {
             opcode: OpcodeReg::JR,
             reg: StgLoc::Reg(Reg::Ra),
         },
@@ -432,50 +174,5 @@ fn live_ins_live_outs() {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
-    }
-}
-
-#[derive(Default)]
-pub struct Interferences {
-    edges: HashMap<StgLoc, BTreeSet<StgLoc>>,
-}
-
-impl Interferences {
-    pub fn interferes_with(&self, a: &StgLoc, b: &StgLoc) -> bool {
-        self.edges
-            .get(a)
-            .map(|set| set.contains(b))
-            .unwrap_or(false)
-            || self
-                .edges
-                .get(b)
-                .map(|set| set.contains(a))
-                .unwrap_or(false)
-    }
-
-    pub fn from_live_sets(
-        instrs: &[AsmInstr],
-        live_outs: HashMap<NodeId, BTreeSet<StgLoc>>,
-    ) -> Self {
-        let mut edges: HashMap<_, BTreeSet<StgLoc>> = HashMap::new();
-
-        let mut defs_buf = BTreeSet::new();
-        let mut uses_buf = BTreeSet::new();
-
-        for (id, instr) in instrs.iter().enumerate() {
-            defs_buf.clear();
-            uses_buf.clear();
-            defs_and_uses(instr, &mut defs_buf, &mut uses_buf);
-
-            for def in defs_buf.iter() {
-                for out in live_outs.get(&id).map(|set| set.iter()).unwrap_or_default() {
-                    if def != out {
-                        edges.entry(def.clone()).or_default().insert(out.clone());
-                    }
-                }
-            }
-        }
-
-        Self { edges }
     }
 }

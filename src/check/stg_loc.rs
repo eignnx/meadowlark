@@ -22,6 +22,13 @@ pub enum StgLoc {
     /// `crate::ast::Instr` allows `crate::ast::ConstValue::ConstAlias`s in this place,
     /// this module requires they be resolved to actual numbers.
     Global(i32),
+
+    /// The CPU register `$LO`. Holds the lower two bytes of a multiplication result.
+    /// Holds the quotient after a division.
+    Lo,
+    /// The CPU register `$HI`. Holds the upper two bytes of a multiplication result.
+    /// Holds the remainder after a division.
+    Hi,
 }
 
 impl fmt::Display for StgLoc {
@@ -31,6 +38,8 @@ impl fmt::Display for StgLoc {
             StgLoc::Alias(name) => write!(f, "{name}"),
             StgLoc::Stack(offset) => write!(f, "[$sp{offset:+}]"),
             StgLoc::Global(offset) => write!(f, "[$gp{offset:+}]"),
+            StgLoc::Lo => write!(f, "$LO"),
+            StgLoc::Hi => write!(f, "$HI"),
         }
     }
 }
