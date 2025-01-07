@@ -705,15 +705,6 @@ impl CodeGen {
         match lvalue {
             LValue::Reg(reg) => write!(out, "{}", reg),
             LValue::Indirection { base, offset } => {
-                // This case is a little exceptional. If it looks like the base is a constant,
-                // interpret the constant as an offset from the zero register.
-                if let (Some(Base::Const(base)), None) = (base, offset) {
-                    if self.consts.contains_key(base) {
-                        write!(out, "{base}($zero)")?;
-                        return Ok(());
-                    }
-                }
-
                 if let Some(offset) = offset {
                     match offset {
                         Offset::I10(i) => write!(out, "{}", i)?,
@@ -752,19 +743,6 @@ impl CodeGen {
                 if let Some(base) = base {
                     match base {
                         Base::Reg(reg) => write!(out, "{reg}")?,
-                        Base::Const(name) => {
-                            if self.consts.contains_key(name) {
-                                write!(out, "{name}")?;
-                            } else {
-                                eprintln!(
-                                    "Error [{}#{}]:",
-                                    self.filename(),
-                                    self.current_subr_name()
-                                );
-                                eprintln!("\tUndefined constant `{name}`.");
-                                std::process::exit(1);
-                            }
-                        }
                         Base::Alias(name) => {
                             if let Some(resolved) = self.var_aliases.get(name) {
                                 self.compile_instr_lvalue(out, &resolved.clone())?;

@@ -1,140 +1,277 @@
-use lark_vm::cpu::{
-    instr::{self, ops::*},
-    regs::Reg,
-};
+use std::{collections::BTreeMap, str::FromStr};
 
-use super::stg_loc::StgLoc;
+use lark_vm::cpu::instr::{self, ops::*};
+
+use crate::ast::{ConstValue, RValue};
+
+use super::stg_loc::{RValueToStgLocError, RValueToStgLocTranslator, StgLoc};
 
 pub type CheckInstr = instr::Instr<StgLoc, i32>;
 
-/// - `defs` are storage locations that would be overwritten by the instruction `self`.
-/// - `uses` are storage locations that would need to be read from by the instruction `self`.
-pub fn defs_and_uses(
-    instr: &CheckInstr,
-    defs: &mut impl Extend<StgLoc>,
-    uses: &mut impl Extend<StgLoc>,
-) {
-    match instr {
-        CheckInstr::O { opcode } => match opcode {
-            OpcodeOp::HALT | OpcodeOp::NOP | OpcodeOp::INRE | OpcodeOp::INRD | OpcodeOp::KRET => {}
-        },
+pub enum InstrTranslationErr {
+    WrongArgCount {
+        opcode: String,
+        expected: usize,
+        got: usize,
+    },
+    WrongArgType {
+        opcode: String,
+        expected: &'static str,
+        got: String,
+    },
+    UnknownOp {
+        opcode: String,
+    },
+    UnboundConstAlias {
+        opcode: String,
+        name: String,
+    },
+}
 
-        CheckInstr::A { opcode, offset: _ } => match opcode {
-            OpcodeAddr::J => {}
-        },
-
-        CheckInstr::I { opcode, imm10: _ } => match opcode {
-            OpcodeImm::EXN | OpcodeImm::KCALL => {}
-        },
-
-        CheckInstr::R { opcode, reg } => match opcode {
-            OpcodeReg::JR => uses.extend([reg.clone()]),
-            OpcodeReg::MVLO | OpcodeReg::MVHI => defs.extend([reg.clone()]),
-        },
-
-        CheckInstr::RI {
-            opcode,
-            reg,
-            imm: _,
-        } => match opcode {
-            OpcodeRegImm::JAL => {
-                let link_reg = reg;
-                defs.extend([link_reg.clone()]);
-                defs.extend(Reg::CALLER_SAVED.iter().map(|&r| r.into()));
-            }
-            OpcodeRegImm::LI => defs.extend([reg.clone()]),
-            OpcodeRegImm::BT | OpcodeRegImm::BF => uses.extend([reg.clone()]),
-        },
-
-        CheckInstr::RR { opcode, reg1, reg2 } => match opcode {
-            OpcodeRegReg::JRAL => {
-                let (link_reg, jump_addr_reg) = (reg1, reg2);
-
-                defs.extend([link_reg.clone()]);
-                defs.extend(Reg::CALLER_SAVED.iter().map(|&r| r.into()));
-
-                uses.extend([jump_addr_reg.clone()]);
-            }
-            OpcodeRegReg::MV
-            | OpcodeRegReg::NOT
-            | OpcodeRegReg::NEG
-            | OpcodeRegReg::SEB
-            | OpcodeRegReg::TEZ
-            | OpcodeRegReg::TNZ => {
-                let (rd, rs) = (reg1, reg2);
-                defs.extend([rd.clone()]);
-                uses.extend([rs.clone()]);
-            }
-            OpcodeRegReg::MUL | OpcodeRegReg::MULU | OpcodeRegReg::DIV | OpcodeRegReg::DIVU => {
-                todo!("How to handle $LO/$HI regs?")
-            }
-        },
-
-        CheckInstr::RRR {
-            opcode,
-            reg1: rd,
-            reg2: rs,
-            reg3: rt,
-        } => match opcode {
-            OpcodeRegRegReg::ADD
-            | OpcodeRegRegReg::SUB
-            | OpcodeRegRegReg::OR
-            | OpcodeRegRegReg::XOR
-            | OpcodeRegRegReg::AND
-            | OpcodeRegRegReg::ADDU
-            | OpcodeRegRegReg::SUBU
-            | OpcodeRegRegReg::SHL
-            | OpcodeRegRegReg::SHR
-            | OpcodeRegRegReg::SHRA
-            | OpcodeRegRegReg::TLT
-            | OpcodeRegRegReg::TGE
-            | OpcodeRegRegReg::TEQ
-            | OpcodeRegRegReg::TNE
-            | OpcodeRegRegReg::TLTU
-            | OpcodeRegRegReg::TGEU => {
-                defs.extend([rd.clone()]);
-                uses.extend([rs.clone(), rt.clone()]);
-            }
-        },
-
-        CheckInstr::RRI {
-            opcode,
-            reg1,
-            reg2,
-            imm10,
-        } => match opcode {
-            OpcodeRegRegImm::LW | OpcodeRegRegImm::LBS | OpcodeRegRegImm::LBU => {
-                let (rd, src_addr_reg) = (reg1, reg2);
-                defs.extend([rd.clone()]);
-
-                match src_addr_reg.clone().try_into() {
-                    Ok(Reg::Sp) => {
-                        uses.extend([src_addr_reg.clone(), StgLoc::Stack(*imm10)]);
-                    }
-                    Ok(Reg::Gp) => {
-                        uses.extend([src_addr_reg.clone(), StgLoc::Global(*imm10)]);
-                    }
-                    _ => uses.extend([src_addr_reg.clone()]),
+impl InstrTranslationErr {
+    fn from_rvalue_err(op_name: &str, e: RValueToStgLocError) -> Self {
+        match e {
+            RValueToStgLocError::ConstAliasUndefined(name) => {
+                InstrTranslationErr::UnboundConstAlias {
+                    opcode: op_name.into(),
+                    name,
                 }
             }
-            OpcodeRegRegImm::SW | OpcodeRegRegImm::SB => {
-                let (dest_addr_reg, rs) = (reg1, reg2);
-                uses.extend([dest_addr_reg.clone(), rs.clone()]);
-                match dest_addr_reg.clone().try_into() {
-                    Ok(Reg::Sp) => defs.extend([StgLoc::Stack(*imm10)]),
-                    Ok(Reg::Gp) => defs.extend([StgLoc::Global(*imm10)]),
-                    _ => {}
+            RValueToStgLocError::NonStgLocRValue(rv) => InstrTranslationErr::WrongArgType {
+                opcode: op_name.into(),
+                expected: "register",
+                got: rv.to_string(),
+            },
+        }
+    }
+}
+
+pub struct CheckInstrTranslator<'a> {
+    consts: &'a BTreeMap<String, ConstValue>,
+}
+
+impl CheckInstrTranslator<'_> {
+    pub fn new(consts: &BTreeMap<String, ConstValue>) -> CheckInstrTranslator<'_> {
+        CheckInstrTranslator { consts }
+    }
+
+    fn try_rvalue_as_i32(
+        &self,
+        current_opcode: &str,
+        rv: &RValue,
+    ) -> Result<i32, InstrTranslationErr> {
+        match rv {
+            RValue::ConstAlias(name) => {
+                if let Some(constexpr) = self.consts.get(name) {
+                    constexpr.evaluate(self.consts).ok_or_else(|| {
+                        InstrTranslationErr::UnboundConstAlias {
+                            opcode: current_opcode.into(),
+                            name: name.clone(),
+                        }
+                    })
+                } else {
+                    Err(InstrTranslationErr::UnboundConstAlias {
+                        opcode: current_opcode.into(),
+                        name: name.clone(),
+                    })
                 }
             }
-            OpcodeRegRegImm::ADDI
-            | OpcodeRegRegImm::SUBI
-            | OpcodeRegRegImm::ORI
-            | OpcodeRegRegImm::XORI
-            | OpcodeRegRegImm::ANDI => {
-                let (rd, rs) = (reg1, reg2);
-                defs.extend([rd.clone()]);
-                uses.extend([rs.clone()]);
+            RValue::Int(i) => Ok(*i as i32),
+            RValue::Uint(u) => Ok(*u as i32),
+            _ => Err(InstrTranslationErr::WrongArgType {
+                opcode: current_opcode.into(),
+                expected: "constant",
+                got: rv.to_string(),
+            }),
+        }
+    }
+
+    pub fn translate(
+        &self,
+        op_name: &str,
+        args: &[RValue],
+    ) -> Result<CheckInstr, InstrTranslationErr> {
+        if let Ok(opcode) = OpcodeOp::from_str(op_name) {
+            match args {
+                [] => return Ok(CheckInstr::O { opcode }),
+                _ => {
+                    return Err(InstrTranslationErr::WrongArgCount {
+                        opcode: op_name.into(),
+                        expected: 0,
+                        got: args.len(),
+                    })
+                }
             }
-        },
+        }
+
+        if let Ok(opcode) = OpcodeAddr::from_str(op_name) {
+            match args {
+                [offset] => {
+                    let offset = self.try_rvalue_as_i32(op_name, offset)?;
+                    return Ok(CheckInstr::A { opcode, offset });
+                }
+                _ => {
+                    return Err(InstrTranslationErr::WrongArgCount {
+                        opcode: op_name.into(),
+                        expected: 1,
+                        got: args.len(),
+                    })
+                }
+            }
+        }
+
+        if let Ok(opcode) = OpcodeReg::from_str(op_name) {
+            match args {
+                [reg] => {
+                    let reg = RValueToStgLocTranslator::new(self.consts)
+                        .translate(reg)
+                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
+                    return Ok(CheckInstr::R { opcode, reg });
+                }
+                _ => {
+                    return Err(InstrTranslationErr::WrongArgCount {
+                        opcode: op_name.into(),
+                        expected: 1,
+                        got: args.len(),
+                    })
+                }
+            }
+        }
+
+        if let Ok(opcode) = OpcodeImm::from_str(op_name) {
+            match args {
+                [imm] => {
+                    let imm = self.try_rvalue_as_i32(op_name, imm)?;
+                    if !(-512..1024).contains(&imm) {
+                        return Err(InstrTranslationErr::WrongArgType {
+                            opcode: op_name.into(),
+                            expected: "10-bit integer",
+                            got: imm.to_string(),
+                        });
+                    }
+                    return Ok(CheckInstr::I { opcode, imm10: imm });
+                }
+                _ => {
+                    return Err(InstrTranslationErr::WrongArgCount {
+                        opcode: op_name.into(),
+                        expected: 1,
+                        got: args.len(),
+                    })
+                }
+            }
+        }
+
+        if let Ok(opcode) = OpcodeRegImm::from_str(op_name) {
+            match args {
+                [reg, imm] => {
+                    let reg = RValueToStgLocTranslator::new(self.consts)
+                        .translate(reg)
+                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
+                    let imm = self.try_rvalue_as_i32(op_name, imm)?;
+                    return Ok(CheckInstr::RI { opcode, reg, imm });
+                }
+                _ => {
+                    return Err(InstrTranslationErr::WrongArgCount {
+                        opcode: op_name.into(),
+                        expected: 2,
+                        got: args.len(),
+                    })
+                }
+            }
+        }
+
+        if let Ok(opcode) = OpcodeRegReg::from_str(op_name) {
+            match args {
+                [reg1, reg2] => {
+                    let reg1 = RValueToStgLocTranslator::new(self.consts)
+                        .translate(reg1)
+                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
+                    let reg2 = RValueToStgLocTranslator::new(self.consts)
+                        .translate(reg2)
+                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
+                    return Ok(CheckInstr::RR { opcode, reg1, reg2 });
+                }
+                _ => {
+                    return Err(InstrTranslationErr::WrongArgCount {
+                        opcode: op_name.into(),
+                        expected: 2,
+                        got: args.len(),
+                    })
+                }
+            }
+        }
+
+        if let Ok(opcode) = OpcodeRegRegImm::from_str(op_name) {
+            match args {
+                [reg1, reg2, imm] => {
+                    let reg1 = RValueToStgLocTranslator::new(self.consts)
+                        .translate(reg1)
+                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
+
+                    let reg2 = RValueToStgLocTranslator::new(self.consts)
+                        .translate(reg2)
+                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
+
+                    let imm = self.try_rvalue_as_i32(op_name, imm)?;
+                    if !(-512..1024).contains(&imm) {
+                        return Err(InstrTranslationErr::WrongArgType {
+                            opcode: op_name.into(),
+                            expected: "10-bit integer",
+                            got: imm.to_string(),
+                        });
+                    }
+
+                    return Ok(CheckInstr::RRI {
+                        opcode,
+                        reg1,
+                        reg2,
+                        imm10: imm,
+                    });
+                }
+                _ => {
+                    return Err(InstrTranslationErr::WrongArgCount {
+                        opcode: op_name.into(),
+                        expected: 3,
+                        got: args.len(),
+                    })
+                }
+            }
+        }
+
+        if let Ok(opcode) = OpcodeRegRegReg::from_str(op_name) {
+            match args {
+                [reg1, reg2, reg3] => {
+                    let reg1 = RValueToStgLocTranslator::new(self.consts)
+                        .translate(reg1)
+                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
+
+                    let reg2 = RValueToStgLocTranslator::new(self.consts)
+                        .translate(reg2)
+                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
+
+                    let reg3 = RValueToStgLocTranslator::new(self.consts)
+                        .translate(reg3)
+                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
+
+                    return Ok(CheckInstr::RRR {
+                        opcode,
+                        reg1,
+                        reg2,
+                        reg3,
+                    });
+                }
+                _ => {
+                    return Err(InstrTranslationErr::WrongArgCount {
+                        opcode: op_name.into(),
+                        expected: 3,
+                        got: args.len(),
+                    })
+                }
+            }
+        }
+
+        Err(InstrTranslationErr::UnknownOp {
+            opcode: op_name.to_string(),
+        })
     }
 }

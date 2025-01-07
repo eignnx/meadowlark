@@ -1,5 +1,6 @@
 pub mod cfg;
 pub mod check_instr;
+pub mod defs_uses;
 pub mod interferences;
 pub mod stg_loc;
 

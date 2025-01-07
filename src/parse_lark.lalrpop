@@ -255,7 +255,6 @@ LValue: LValue = {
 Base: Base = {
     <reg: Reg> => Base::Reg(reg),
     <alias_name: Ident> => Base::Alias(alias_name),
-    <const_name: ConstIdent> => Base::Const(const_name),
 };
 
 Offset: Offset = {

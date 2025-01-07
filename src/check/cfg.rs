@@ -2,10 +2,7 @@ use std::collections::{BTreeSet, HashMap};
 
 use lark_vm::cpu::regs::Reg;
 
-use super::{
-    check_instr::{self, CheckInstr},
-    stg_loc::StgLoc,
-};
+use super::{check_instr::CheckInstr, defs_uses, stg_loc::StgLoc};
 
 pub type NodeId = usize;
 
@@ -101,7 +98,7 @@ impl Cfg {
         for (id, instr) in self.stmts.iter().enumerate().rev() {
             defs_buf.clear();
             uses_buf.clear();
-            check_instr::defs_and_uses(instr, &mut defs_buf, &mut uses_buf);
+            defs_uses::defs_and_uses(instr, &mut defs_buf, &mut uses_buf);
 
             let outs: &mut BTreeSet<StgLoc> = live_outs.entry(id).or_default();
 

@@ -1,10 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
-use super::{
-    cfg::NodeId,
-    check_instr::{self, CheckInstr},
-    stg_loc::StgLoc,
-};
+use super::{cfg::NodeId, check_instr::CheckInstr, defs_uses, stg_loc::StgLoc};
 
 #[derive(Default)]
 pub struct Interferences {
@@ -36,7 +32,7 @@ impl Interferences {
         for (id, instr) in instrs.iter().enumerate() {
             defs_buf.clear();
             uses_buf.clear();
-            check_instr::defs_and_uses(instr, &mut defs_buf, &mut uses_buf);
+            defs_uses::defs_and_uses(instr, &mut defs_buf, &mut uses_buf);
 
             for def in defs_buf.iter() {
                 for out in live_outs.get(&id).map(|set| set.iter()).unwrap_or_default() {

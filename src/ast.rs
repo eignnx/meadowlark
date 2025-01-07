@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 
 use lark_vm::cpu::regs::Reg;
 
@@ -60,6 +60,25 @@ pub enum ConstValue {
     BinOp(Box<ConstValue>, BinOp, Box<ConstValue>),
 }
 
+impl ConstValue {
+    pub fn evaluate(&self, aliases: &BTreeMap<Var, ConstValue>) -> Option<i32> {
+        match self {
+            ConstValue::Uint(u) => Some(*u as i32),
+            ConstValue::Int(i) => Some(*i as i32),
+            ConstValue::Char(c) => Some(*c as i32),
+            ConstValue::ConstAlias(alias) => {
+                let value = aliases.get(alias)?;
+                value.evaluate(aliases)
+            }
+            ConstValue::BinOp(lhs, op, rhs) => {
+                let lhs = lhs.evaluate(aliases)?;
+                let rhs = rhs.evaluate(aliases)?;
+                Some(op.eval(lhs, rhs))
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum AliasBinding {
     /// Example: `x` (Gets bound to one of `$a0..$a2` if argument).
@@ -87,15 +106,13 @@ pub enum AliasBinding {
 pub enum Base {
     Reg(Reg),
     Alias(Var),
-    Const(Var),
 }
 
-impl fmt::Display for Offset {
+impl fmt::Display for Base {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Offset::I10(i) => write!(f, "{}", i),
-            Offset::Const(var) => write!(f, "+{}", var),
-            Offset::NegatedConst(var) => write!(f, "-{}", var),
+            Base::Reg(reg) => write!(f, "{}", reg),
+            Base::Alias(var) => write!(f, "{}", var),
         }
     }
 }
@@ -107,12 +124,12 @@ pub enum Offset {
     NegatedConst(Var),
 }
 
-impl fmt::Display for Base {
+impl fmt::Display for Offset {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Base::Reg(reg) => write!(f, "{}", reg),
-            Base::Alias(var) => write!(f, "{}", var),
-            Base::Const(var) => write!(f, "{}", var),
+            Offset::I10(i) => write!(f, "{}", i),
+            Offset::Const(var) => write!(f, "+{}", var),
+            Offset::NegatedConst(var) => write!(f, "-{}", var),
         }
     }
 }
@@ -127,7 +144,6 @@ pub enum LValue {
     /// | Syntax                | Equivalent          |
     /// |:----------------------|--------------------:|
     /// | `[$a0]`               | `0($a0)`            |
-    /// | `[0xBEEF]`            | `0xBEEF($zero)`     |
     /// | `[some_alias]`        | `0(some_alias)`     |
     /// | `[$a0 + 4]`           | `4($a0)`            |
     /// | `[$a0 - 4]`           | `-4($a0)`           |
@@ -226,48 +242,20 @@ pub enum RValue {
     LValue(LValue),
 }
 
-// #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-// pub enum Reg {
-//     Zero,
-//     Rv,
-//     Ra,
-//     Arg(u8),
-//     Saved(u8),
-//     Temp(u8),
-//     Kernel(u8),
-//     Gp,
-//     Sp,
-// }
-
-// impl Reg {
-//     #[allow(unused)]
-//     pub fn is_callee_saved(&self) -> bool {
-//         match self {
-//             Reg::Ra | Reg::Saved(_) | Reg::Gp | Reg::Sp => true,
-//             Reg::Zero | Reg::Rv | Reg::Arg(_) | Reg::Temp(_) | Reg::Kernel(_) => false,
-//         }
-//     }
-
-//     pub fn argument_registers() -> impl Iterator<Item = Reg> {
-//         (0..3).map(Reg::Arg)
-//     }
-// }
-
-// impl fmt::Display for Reg {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         match self {
-//             Reg::Zero => write!(f, "$zero"),
-//             Reg::Rv => write!(f, "$rv"),
-//             Reg::Ra => write!(f, "$ra"),
-//             Reg::Arg(n) => write!(f, "$a{}", n),
-//             Reg::Saved(n) => write!(f, "$s{}", n),
-//             Reg::Temp(n) => write!(f, "$t{}", n),
-//             Reg::Kernel(n) => write!(f, "$k{}", n),
-//             Reg::Gp => write!(f, "$gp"),
-//             Reg::Sp => write!(f, "$sp"),
-//         }
-//     }
-// }
+impl fmt::Display for RValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            RValue::Uint(u) => write!(f, "{u}"),
+            RValue::Int(i) => write!(f, "{i:+}"),
+            RValue::Char(byte) => write!(f, "{:?}", *byte as char),
+            RValue::String(str) => write!(f, "{:?}", str),
+            RValue::Label(lbl) => write!(f, "&{}", lbl),
+            RValue::ConstAlias(name) => write!(f, "{name}"),
+            RValue::Alias(name) => write!(f, "{name}"),
+            RValue::LValue(lvalue) => write!(f, "{lvalue}"),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum Directive {
