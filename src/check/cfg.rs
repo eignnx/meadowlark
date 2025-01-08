@@ -65,12 +65,16 @@ impl Cfg {
             .filter_map(move |(from, to)| if *from == node_id { Some(*to) } else { None })
     }
 
+    pub fn stmts(&self) -> &[CheckInstr] {
+        &self.stmts
+    }
+
     /// Adds a label to the CFG. If `id` is `None`, the **NEXT** instruction will be labelled with the given name.
     pub fn add_label(&mut self, label: String, id: Option<NodeId>) {
         if let Some(id) = id {
             self.labels.insert(label, id);
         } else {
-            self.label_links.push((self.stmts.len(), label));
+            self.labels.insert(label, self.stmts.len());
         }
     }
 
@@ -79,7 +83,7 @@ impl Cfg {
             if let Some(target_id) = self.labels.get(&label) {
                 self.edges.insert((id, *target_id));
             } else {
-                panic!("Label {label} is undefined");
+                eprintln!("Warning: Label `{label}` is undefined.");
             }
         }
     }

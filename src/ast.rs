@@ -102,7 +102,7 @@ pub enum AliasBinding {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Base {
     Reg(Reg),
     Alias(Var),
@@ -117,7 +117,7 @@ impl fmt::Display for Base {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Offset {
     I10(i16),
     Const(Var),
@@ -134,7 +134,7 @@ impl fmt::Display for Offset {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LValue {
     /// Example: `$t0`, `$rv`
     Reg(Reg),

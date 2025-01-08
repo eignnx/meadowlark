@@ -200,7 +200,7 @@ RValue: RValue = {
     <string_literal: r#""[^"]*""#> => {
         RValue::String(string_literal[1..string_literal.len()-1].to_string())
     },
-    r"&" <label: Ident> => RValue::Label(label.to_string()),
+    "&" <label: Ident> => RValue::Label(label.to_string()),
     <alias_name: Ident> => RValue::Alias(alias_name.to_string()),
     <const_name: ConstIdent> => RValue::ConstAlias(const_name.to_string()),
     <lvalue: LValue> => RValue::LValue(lvalue),

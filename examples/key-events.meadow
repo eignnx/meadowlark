@@ -1,33 +1,33 @@
 subr _start() {
-    !jal $ra, &boot;
-    !j &main;
+    !jal    $ra, &boot;
+    !j      &main;
 }
 
 def SLOT__ILL_INSTR = 0xFFFE;
 def SLOT__KEY_EVENT = 0xFFFA;
 
 subr boot() preserve ($ra) {
-    alias vec_slot => $t0;
-    alias isr_ptr => $t1;
+    alias   vec_slot => $t0;
+    alias   isr_ptr => $t1;
 
     # Setup ILL_INSTR handler
-    !li vec_slot, SLOT__ILL_INSTR; # Slot in interrupt vector
-    !li isr_ptr, &handle_ILL_INSTR; # Function pointer of handler
-    !sw [vec_slot], isr_ptr;
+    !li     vec_slot, SLOT__ILL_INSTR; # Slot in interrupt vector
+    !li     isr_ptr, &handle_ILL_INSTR; # Function pointer of handler
+    !sw     [vec_slot], isr_ptr;
 
     # Setup KEY_EVENT handler
-    !li vec_slot, SLOT__KEY_EVENT;
-    !li isr_ptr, &handle_KEY_EVENT;
-    !sw [vec_slot], isr_ptr;
+    !li     vec_slot, SLOT__KEY_EVENT;
+    !li     isr_ptr, &handle_KEY_EVENT;
+    !sw     [vec_slot], isr_ptr;
 
-    alias vtty_buf_len_addr => $t0;
-    !li vtty_buf_len_addr, 0xF002;
-    !sw [vtty_buf_len_addr], $zero; # Set length of vtty buffer to zero.
+    alias   vtty_buf_len_addr => $t0;
+    !li     vtty_buf_len_addr, 0xF002;
+    !sw     [vtty_buf_len_addr], $zero; # Set length of vtty buffer to zero.
 
-    !jal $ra, &init_key_buffer;
+    !jal    $ra, &init_key_buffer;
 
     restore;
-    !jr $ra;
+    !jr     $ra;
 }
 
 def PUTS = 3;

@@ -112,6 +112,7 @@ impl CheckInstrTranslator<'_> {
             }
             RValue::Int(i) => Ok(*i as i32),
             RValue::Uint(u) => Ok(*u as i32),
+            RValue::Label(_) => Ok(0x00CAFE00),
             _ => Err(InstrTranslationErr::WrongArgType {
                 opcode: current_opcode.into(),
                 expected: "constant",
@@ -378,7 +379,7 @@ impl Links for OpcodeRegImm {
             OpcodeRegImm::LI => links.extend([Link::ToNext]),
             OpcodeRegImm::BT | OpcodeRegImm::BF => {
                 let label = match args {
-                    [RValue::Label(label)] => label.clone(),
+                    [_test_reg, RValue::Label(label)] => label.clone(),
                     _ => unreachable!(),
                 };
                 links.extend([Link::ToNext, Link::JumpToLabel(label.into())]);

@@ -5,6 +5,8 @@ use std::path::PathBuf;
 
 use lark_vm::cpu::{instr::ops::*, regs::Reg};
 
+use crate::check::interferences::Interferences;
+use crate::check::stg_loc::StgLoc;
 use crate::{
     ast::*,
     check::{
@@ -36,6 +38,7 @@ impl CodeGen {
         }
     }
 
+    #[inline]
     fn filename(&self) -> &str {
         self.filename
             .as_ref()
@@ -43,6 +46,7 @@ impl CodeGen {
             .unwrap_or("<unknown>")
     }
 
+    #[inline]
     fn current_subr_name(&self) -> &str {
         self.current_subr
             .as_ref()
@@ -294,9 +298,40 @@ impl CodeGen {
             self.compile_stmt(out, stmt)?;
         }
 
+        self.subr_cfg_check();
+
         self.comment(out, "</SubrDef>")?;
 
         Ok(())
+    }
+
+    fn subr_cfg_check(&mut self) {
+        let cfg = self.current_cfg_mut();
+        cfg.add_all_deferred_labels();
+        let (_live_ins, live_outs) = cfg.compute_live_ins_live_outs();
+        let intfs = Interferences::from_live_sets(cfg.stmts(), live_outs);
+
+        // Check all aliases:
+        let alias_bindings = &self.var_aliases;
+        for (alias1, binding1) in alias_bindings.iter() {
+            for (alias2, binding2) in alias_bindings.iter() {
+                if alias1 >= alias2 || binding1 != binding2 {
+                    continue;
+                }
+
+                if intfs.interferes_with(
+                    &StgLoc::Alias(alias1.clone()),
+                    &StgLoc::Alias(alias2.clone()),
+                ) {
+                    eprintln!(
+                        "Warning [{}#{}]:",
+                        self.filename(),
+                        self.current_subr_name()
+                    );
+                    eprintln!("\tAliases `{alias1}` and `{alias2}` are both bound to register `{binding1}` but both are simultaneously in use.");
+                }
+            }
+        }
     }
 
     fn bind_arg_alias(
@@ -625,9 +660,8 @@ impl CodeGen {
                     _ => panic!("Test argument of `if` statement is not a register."),
                 };
 
-                // writeln!(out, "\tbf\t{test_reg_resolved}, {if_else}")?;
-                self.emit_instr(
-                    out,
+                writeln!(out, "\tbf\t{test_reg_resolved}, {if_else}")?;
+                self.emit_instr_no_write(
                     CheckInstr::RI {
                         opcode: OpcodeRegImm::BF,
                         reg: (*test_reg_resolved).into(),
@@ -642,9 +676,8 @@ impl CodeGen {
                 }
                 self.comment(out, "</IfElse.Consequent>")?;
 
-                // writeln!(out, "\tj\t{if_end}")?;
-                self.emit_instr(
-                    out,
+                writeln!(out, "\tj\t{if_end}")?;
+                self.emit_instr_no_write(
                     CheckInstr::A {
                         opcode: OpcodeAddr::J,
                         offset: Self::DUMMY_LABEL_OFFSET,
@@ -679,9 +712,8 @@ impl CodeGen {
                 let loop_cond = self.label_indexes.fresh(".while_cond");
 
                 self.comment(out, "<While>")?;
-                // writeln!(out, "\tj\t{loop_cond}")?;
-                self.emit_instr(
-                    out,
+                writeln!(out, "\tj\t{loop_cond}")?;
+                self.emit_instr_no_write(
                     CheckInstr::A {
                         opcode: OpcodeAddr::J,
                         offset: Self::DUMMY_LABEL_OFFSET,
@@ -723,9 +755,8 @@ impl CodeGen {
                     }
                     _ => panic!("Test argument of `while` loop is not a register."),
                 };
-                // writeln!(out, "\tbt\t{test_arg_resolved}, {loop_top}")?;
-                self.emit_instr(
-                    out,
+                writeln!(out, "\tbt\t{test_arg_resolved}, {loop_top}")?;
+                self.emit_instr_no_write(
                     CheckInstr::RI {
                         opcode: OpcodeRegImm::BT,
                         reg: (*test_arg_resolved).into(),
@@ -745,9 +776,8 @@ impl CodeGen {
                 for stmt in body {
                     self.compile_stmt(out, stmt)?;
                 }
-                // writeln!(out, "\tj\t{loop_top}")?;
-                self.emit_instr(
-                    out,
+                writeln!(out, "\tj\t{loop_top}")?;
+                self.emit_instr_no_write(
                     CheckInstr::A {
                         opcode: OpcodeAddr::J,
                         offset: Self::DUMMY_LABEL_OFFSET,

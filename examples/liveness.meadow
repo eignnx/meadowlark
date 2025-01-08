@@ -7,7 +7,7 @@ subr blah(x, y) {
 
     alias   c => $t0;
     !mv     c, a; # No conflict.
-    # !mv     c, a; # Conflict! `a` is no longer live.
+    !mv     c, a; # Conflict! `a` is no longer live.
     !add    c, x, b; # No conflict.
 }
 
@@ -26,7 +26,7 @@ subr blah(x, y) {
 subr foo(n => $a0) {
     alias   z => $t0;
     alias   x => $t1;
-    alias   y => $t2;
+    alias   y => $t1; # ought to be $t2
     alias   cond => $t0;
 
     !li     z, 10;
@@ -67,7 +67,7 @@ subr foo_compiled(n => $a0) {
     !add    z, z, y;
     !addi   x, x, 1;
     !add    y, x, z;
-    !j      &loop_top;;
+    !j      &loop_top;
     loop_end:
 
     !mv     $rv, y;
