@@ -348,8 +348,8 @@ impl CodeGen {
                 );
                 }
                 _ => {
-                    let unneeded = unneeded.join(", ");
-                    eprintln!("Warning [{}#{}]:", self.filename(), subr_name);
+            let unneeded = unneeded.join(", ");
+            eprintln!("Warning [{}#{}]:", self.filename(), subr_name);
                     eprintln!("\tRegisters {unneeded} are not callee saved and usually do not need to be preserved." );
                 }
             }
