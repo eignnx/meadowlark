@@ -1,4 +1,7 @@
-use std::collections::{BTreeSet, HashMap};
+use std::{
+    borrow::Cow,
+    collections::{BTreeSet, HashMap},
+};
 
 use lark_vm::cpu::regs::Reg;
 
@@ -14,6 +17,11 @@ pub struct Cfg {
     exits: BTreeSet<NodeId>,
     live_ins_on_entry: BTreeSet<StgLoc>,
     live_outs_on_exit: BTreeSet<StgLoc>,
+
+    labels: HashMap<String, NodeId>,
+    /// Links that will be added after the CFG is built and all labels are defined.
+    label_links: Vec<(usize, String)>,
+    link_from_prev: bool,
 }
 
 impl Cfg {
@@ -25,6 +33,9 @@ impl Cfg {
             exits: BTreeSet::new(),
             live_ins_on_entry: [Reg::Ra.into()].into(),
             live_outs_on_exit: [Reg::Ra.into()].into(),
+            labels: HashMap::new(),
+            label_links: Vec::new(),
+            link_from_prev: false,
         }
     }
 
@@ -54,12 +65,35 @@ impl Cfg {
             .filter_map(move |(from, to)| if *from == node_id { Some(*to) } else { None })
     }
 
+    /// Adds a label to the CFG. If `id` is `None`, the **NEXT** instruction will be labelled with the given name.
+    pub fn add_label(&mut self, label: String, id: Option<NodeId>) {
+        if let Some(id) = id {
+            self.labels.insert(label, id);
+        } else {
+            self.label_links.push((self.stmts.len(), label));
+        }
+    }
+
+    pub fn add_all_deferred_labels(&mut self) {
+        for (id, label) in self.label_links.drain(..) {
+            if let Some(target_id) = self.labels.get(&label) {
+                self.edges.insert((id, *target_id));
+            } else {
+                panic!("Label {label} is undefined");
+            }
+        }
+    }
+
     pub fn compute_live_ins_live_outs(
         &self,
     ) -> (
         HashMap<NodeId, BTreeSet<StgLoc>>,
         HashMap<NodeId, BTreeSet<StgLoc>>,
     ) {
+        if !self.label_links.is_empty() {
+            panic!("Please call `Cfg::add_all_deferred_labels` before computing live ins and outs");
+        }
+
         let mut live_ins: HashMap<NodeId, BTreeSet<StgLoc>> = HashMap::new();
         let mut live_outs: HashMap<NodeId, BTreeSet<StgLoc>> = HashMap::new();
 
@@ -129,4 +163,43 @@ impl Cfg {
         }
         changed
     }
+
+    pub(crate) fn push_instr<'s>(
+        &mut self,
+        instr: CheckInstr,
+        links: impl IntoIterator<Item = Link<'s>> + 's,
+    ) -> NodeId {
+        let id = self.stmts.len();
+
+        self.stmts.push(instr);
+
+        if self.link_from_prev {
+            self.edges.insert((id - 1, id));
+            self.link_from_prev = false;
+        }
+
+        for link in links.into_iter() {
+            match link {
+                Link::ToNext => {
+                    self.link_from_prev = true;
+                }
+                Link::JumpToNodeId(target) => {
+                    self.edges.insert((id, target));
+                }
+                Link::JumpToLabel(label) => {
+                    self.label_links.push((id, label.into()));
+                }
+            }
+        }
+        id
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Link<'s> {
+    /// Program control proceeds to the next instruction after executing this instruction.
+    ToNext,
+    /// Program control (may) jump to the given node after executing this instruction.
+    JumpToNodeId(NodeId),
+    JumpToLabel(Cow<'s, str>),
 }

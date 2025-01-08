@@ -1,10 +1,14 @@
+use core::fmt;
 use std::{collections::BTreeMap, str::FromStr};
 
 use lark_vm::cpu::instr::{self, ops::*};
 
 use crate::ast::{ConstValue, RValue};
 
-use super::stg_loc::{RValueToStgLocError, RValueToStgLocTranslator, StgLoc};
+use super::{
+    cfg::Link,
+    stg_loc::{RValueToStgLocError, RValueToStgLocTranslator, StgLoc},
+};
 
 pub type CheckInstr = instr::Instr<StgLoc, i32>;
 
@@ -26,6 +30,36 @@ pub enum InstrTranslationErr {
         opcode: String,
         name: String,
     },
+}
+
+impl fmt::Display for InstrTranslationErr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InstrTranslationErr::WrongArgCount {
+                opcode,
+                expected,
+                got,
+            } => {
+                write!(f, "wrong number of arguments for instr `{opcode}`: expected {expected}, got {got}")
+            }
+            InstrTranslationErr::WrongArgType {
+                opcode,
+                expected,
+                got,
+            } => {
+                write!(
+                    f,
+                    "wrong argument type for instr `{opcode}`: expected {expected}, got {got}"
+                )
+            }
+            InstrTranslationErr::UnknownOp { opcode } => {
+                write!(f, "unknown instruction `{opcode}`")
+            }
+            InstrTranslationErr::UnboundConstAlias { opcode, name } => {
+                write!(f, "unbound const alias `{name}` in instr `{opcode}`")
+            }
+        }
+    }
 }
 
 impl InstrTranslationErr {
@@ -90,8 +124,10 @@ impl CheckInstrTranslator<'_> {
         &self,
         op_name: &str,
         args: &[RValue],
+        links: &mut impl Extend<Link<'static>>,
     ) -> Result<CheckInstr, InstrTranslationErr> {
         if let Ok(opcode) = OpcodeOp::from_str(op_name) {
+            opcode.links(links, args);
             match args {
                 [] => return Ok(CheckInstr::O { opcode }),
                 _ => {
@@ -105,6 +141,7 @@ impl CheckInstrTranslator<'_> {
         }
 
         if let Ok(opcode) = OpcodeAddr::from_str(op_name) {
+            opcode.links(links, args);
             match args {
                 [offset] => {
                     let offset = self.try_rvalue_as_i32(op_name, offset)?;
@@ -121,6 +158,7 @@ impl CheckInstrTranslator<'_> {
         }
 
         if let Ok(opcode) = OpcodeReg::from_str(op_name) {
+            opcode.links(links, args);
             match args {
                 [reg] => {
                     let reg = RValueToStgLocTranslator::new(self.consts)
@@ -139,6 +177,7 @@ impl CheckInstrTranslator<'_> {
         }
 
         if let Ok(opcode) = OpcodeImm::from_str(op_name) {
+            opcode.links(links, args);
             match args {
                 [imm] => {
                     let imm = self.try_rvalue_as_i32(op_name, imm)?;
@@ -162,6 +201,7 @@ impl CheckInstrTranslator<'_> {
         }
 
         if let Ok(opcode) = OpcodeRegImm::from_str(op_name) {
+            opcode.links(links, args);
             match args {
                 [reg, imm] => {
                     let reg = RValueToStgLocTranslator::new(self.consts)
@@ -181,6 +221,7 @@ impl CheckInstrTranslator<'_> {
         }
 
         if let Ok(opcode) = OpcodeRegReg::from_str(op_name) {
+            opcode.links(links, args);
             match args {
                 [reg1, reg2] => {
                     let reg1 = RValueToStgLocTranslator::new(self.consts)
@@ -202,6 +243,7 @@ impl CheckInstrTranslator<'_> {
         }
 
         if let Ok(opcode) = OpcodeRegRegImm::from_str(op_name) {
+            opcode.links(links, args);
             match args {
                 [reg1, reg2, imm] => {
                     let reg1 = RValueToStgLocTranslator::new(self.consts)
@@ -239,6 +281,7 @@ impl CheckInstrTranslator<'_> {
         }
 
         if let Ok(opcode) = OpcodeRegRegReg::from_str(op_name) {
+            opcode.links(links, args);
             match args {
                 [reg1, reg2, reg3] => {
                     let reg1 = RValueToStgLocTranslator::new(self.consts)
@@ -273,5 +316,146 @@ impl CheckInstrTranslator<'_> {
         Err(InstrTranslationErr::UnknownOp {
             opcode: op_name.to_string(),
         })
+    }
+}
+
+trait Links {
+    fn links(self, links: &mut impl Extend<Link<'static>>, args: &[RValue]);
+}
+
+impl Links for OpcodeOp {
+    fn links(self, links: &mut impl Extend<Link<'static>>, _args: &[RValue]) {
+        match self {
+            OpcodeOp::HALT => {} // NO LINKS AT ALL FOR HALT!
+            OpcodeOp::NOP | OpcodeOp::INRE | OpcodeOp::INRD | OpcodeOp::KRET => {
+                links.extend([Link::ToNext]);
+            }
+        }
+    }
+}
+
+impl Links for OpcodeAddr {
+    fn links(self, links: &mut impl Extend<Link<'static>>, args: &[RValue]) {
+        match self {
+            OpcodeAddr::J => {
+                let label = match args {
+                    [RValue::Label(label)] => label.clone(),
+                    _ => unreachable!(),
+                };
+                links.extend([Link::ToNext, Link::JumpToLabel(label.into())]);
+            }
+        }
+    }
+}
+
+impl Links for OpcodeImm {
+    fn links(self, links: &mut impl Extend<Link<'static>>, _args: &[RValue]) {
+        match self {
+            OpcodeImm::EXN => {
+                // TODO: `exn DIV_BY_ZERO` should probably be assumed to never return.
+                // Oh well, this is a conservative guess in any case.
+                links.extend([Link::ToNext]);
+            }
+            OpcodeImm::KCALL => links.extend([Link::ToNext]),
+        }
+    }
+}
+
+impl Links for OpcodeReg {
+    fn links(self, links: &mut impl Extend<Link<'static>>, _args: &[RValue]) {
+        match self {
+            // `jr` is usually the `return` instruction. So it never proceeds to any other
+            // instruction within the same subroutine call.
+            OpcodeReg::JR => {}
+            OpcodeReg::MVLO | OpcodeReg::MVHI => links.extend([Link::ToNext]),
+        }
+    }
+}
+
+impl Links for OpcodeRegImm {
+    fn links(self, links: &mut impl Extend<Link<'static>>, args: &[RValue]) {
+        match self {
+            OpcodeRegImm::LI => links.extend([Link::ToNext]),
+            OpcodeRegImm::BT | OpcodeRegImm::BF => {
+                let label = match args {
+                    [RValue::Label(label)] => label.clone(),
+                    _ => unreachable!(),
+                };
+                links.extend([Link::ToNext, Link::JumpToLabel(label.into())]);
+            }
+            // `jal` is (usually) the `call` instruction. So will very likely proceed to the next
+            // instruction after returning from that subroutine call.
+            OpcodeRegImm::JAL => links.extend([Link::ToNext]),
+        }
+    }
+}
+
+impl Links for OpcodeRegReg {
+    fn links(self, links: &mut impl Extend<Link<'static>>, args: &[RValue]) {
+        match self {
+            OpcodeRegReg::JRAL => {
+                // `jalr` is (usually) `call_indirect` instruction. So will very likely proceed to the next
+                // instruction after returning from that subroutine call.
+                links.extend([Link::ToNext]);
+            }
+            OpcodeRegReg::MV
+            | OpcodeRegReg::NOT
+            | OpcodeRegReg::NEG
+            | OpcodeRegReg::SEB
+            | OpcodeRegReg::MUL
+            | OpcodeRegReg::DIV
+            | OpcodeRegReg::MULU
+            | OpcodeRegReg::DIVU => {
+                links.extend([Link::ToNext]);
+            }
+
+            OpcodeRegReg::TEZ | OpcodeRegReg::TNZ => {
+                let label = match args {
+                    [RValue::Label(label)] => label.clone(),
+                    _ => unreachable!(),
+                };
+                links.extend([Link::ToNext, Link::JumpToLabel(label.into())]);
+            }
+        }
+    }
+}
+
+impl Links for OpcodeRegRegImm {
+    fn links(self, links: &mut impl Extend<Link<'static>>, _args: &[RValue]) {
+        match self {
+            OpcodeRegRegImm::LW
+            | OpcodeRegRegImm::LBS
+            | OpcodeRegRegImm::LBU
+            | OpcodeRegRegImm::SW
+            | OpcodeRegRegImm::SB
+            | OpcodeRegRegImm::ADDI
+            | OpcodeRegRegImm::SUBI
+            | OpcodeRegRegImm::ORI
+            | OpcodeRegRegImm::XORI
+            | OpcodeRegRegImm::ANDI => links.extend([Link::ToNext]),
+        }
+    }
+}
+
+impl Links for OpcodeRegRegReg {
+    fn links(self, links: &mut impl Extend<Link<'static>>, _args: &[RValue]) {
+        match self {
+            OpcodeRegRegReg::ADD
+            | OpcodeRegRegReg::SUB
+            | OpcodeRegRegReg::OR
+            | OpcodeRegRegReg::XOR
+            | OpcodeRegRegReg::AND
+            | OpcodeRegRegReg::ADDU
+            | OpcodeRegRegReg::SUBU
+            | OpcodeRegRegReg::SHL
+            | OpcodeRegRegReg::SHR
+            | OpcodeRegRegReg::SHRA
+            | OpcodeRegRegReg::TLT
+            | OpcodeRegRegReg::TGE
+            | OpcodeRegRegReg::TEQ
+            | OpcodeRegRegReg::TNE
+            | OpcodeRegRegReg::TLTU
+            | OpcodeRegRegReg::TGEU => links.extend([Link::ToNext]),
+        }
     }
 }

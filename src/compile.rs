@@ -1,10 +1,17 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
 use std::path::PathBuf;
 
-use lark_vm::cpu::regs::Reg;
+use lark_vm::cpu::{instr::ops::*, regs::Reg};
 
-use crate::ast::*;
+use crate::{
+    ast::*,
+    check::{
+        cfg::{Cfg, Link, NodeId},
+        check_instr::{CheckInstr, CheckInstrTranslator},
+    },
+};
 
 pub struct CodeGen {
     label_indexes: LabelIndexes,
@@ -47,6 +54,39 @@ impl CodeGen {
         if self.emit_comments {
             writeln!(out, "; {}", comment)?;
         }
+        Ok(())
+    }
+
+    fn current_cfg_mut(&mut self) -> &mut Cfg {
+        &mut self
+            .current_subr
+            .as_mut()
+            .expect("current function set")
+            .cfg
+    }
+
+    fn emit_instr<'s>(
+        &mut self,
+        out: &mut dyn io::Write,
+        instr: CheckInstr,
+        links: impl IntoIterator<Item = Link<'s>> + 's,
+    ) -> io::Result<NodeId> {
+        writeln!(out, "\t{instr}")?;
+        self.emit_instr_no_write(instr, links)
+    }
+
+    fn emit_instr_no_write<'s>(
+        &mut self,
+        instr: CheckInstr,
+        links: impl IntoIterator<Item = Link<'s>> + 's,
+    ) -> io::Result<NodeId> {
+        let node_id = self.current_cfg_mut().push_instr(instr, links);
+        Ok(node_id)
+    }
+
+    fn emit_label(&mut self, out: &mut dyn io::Write, label: String) -> io::Result<()> {
+        writeln!(out, "{label}:")?;
+        self.current_cfg_mut().add_label(label, None);
         Ok(())
     }
 
@@ -202,6 +242,7 @@ impl CodeGen {
             subr_name: subr_name.clone(),
             is_isr,
             callee_regs_to_save: preserve_regs.to_vec(),
+            cfg: Cfg::new(vec![]),
         });
 
         self.comment(
@@ -339,20 +380,9 @@ impl CodeGen {
                 .filter(|r| !r.is_callee_saved())
                 .map(|r| format!("`{r}`"))
                 .collect::<Vec<_>>();
-            match &unneeded[..] {
-                [] => {}
-                [r] => {
-                    eprintln!("Warning [{}#{}]:", self.filename(), subr_name);
-                    eprintln!(
-                    "\tRegister {r} is not callee saved and usually does not need to be preserved."
-                );
-                }
-                _ => {
             let unneeded = unneeded.join(", ");
             eprintln!("Warning [{}#{}]:", self.filename(), subr_name);
-                    eprintln!("\tRegisters {unneeded} are not callee saved and usually do not need to be preserved." );
-                }
-            }
+            eprintln!("\tRegister(s) {unneeded} are not callee saved and usually do not need to be preserved." );
         }
 
         let reg_list = preserve_regs
@@ -364,12 +394,29 @@ impl CodeGen {
         self.comment(out, &format!("<Preserve regs=[{reg_list}]>"))?;
 
         // Bump the stack pointer to make room for the registers we're about to save.
-        writeln!(out, "\tsubi\t$sp, $sp, {}", preserve_regs.len() * 2)?;
+        self.emit_instr(
+            out,
+            CheckInstr::RRI {
+                opcode: OpcodeRegRegImm::SUBI,
+                reg1: Reg::Sp.into(),
+                reg2: Reg::Sp.into(),
+                imm10: (preserve_regs.len() * 2) as i32,
+            },
+            [Link::ToNext],
+        )?;
 
         // Save the registers.
         for (i, reg) in preserve_regs.iter().enumerate() {
-            let offset = (i * std::mem::size_of::<u16>()) as isize;
-            writeln!(out, "\tsw\t{offset}($sp), {reg}")?;
+            self.emit_instr(
+                out,
+                CheckInstr::RRI {
+                    opcode: OpcodeRegRegImm::SW,
+                    reg1: Reg::Sp.into(),
+                    reg2: (*reg).into(),
+                    imm10: (i * std::mem::size_of::<u16>()) as i32,
+                },
+                [Link::ToNext],
+            )?;
         }
 
         self.comment(out, "</Preserve>")?;
@@ -402,9 +449,12 @@ impl CodeGen {
         eprintln!("\tArgument register `{reg}` already assigned to argument `{prev_use}`.");
     }
 
+    #[allow(clippy::unusual_byte_groupings)]
+    const DUMMY_LABEL_OFFSET: i32 = 0x1ABE1_DED; // "Label, Dead"
+
     fn compile_stmt(&mut self, out: &mut dyn io::Write, stmt: &Stmt) -> io::Result<()> {
         match stmt {
-            Stmt::Label(name) => writeln!(out, "{}:", name)?,
+            Stmt::Label(name) => self.emit_label(out, name.to_owned())?,
 
             Stmt::Instr(instr) => self.compile_instr(out, instr)?,
 
@@ -413,14 +463,36 @@ impl CodeGen {
                     .current_subr
                     .as_ref()
                     .expect("current function set")
-                    .callee_regs_to_save;
+                    .callee_regs_to_save
+                    .clone();
+
                 if !regs_to_restore.is_empty() {
                     self.comment(out, "<Restore>")?;
                     for (i, reg) in regs_to_restore.iter().enumerate().rev() {
                         let offset = i as isize * 2;
-                        writeln!(out, "\tlw\t{reg}, {offset}($sp)")?;
+                        // writeln!(out, "\tlw\t{reg}, {offset}($sp)")?;
+                        self.emit_instr(
+                            out,
+                            CheckInstr::RRI {
+                                opcode: OpcodeRegRegImm::LW,
+                                reg1: (*reg).into(),
+                                reg2: Reg::Sp.into(),
+                                imm10: offset as i32,
+                            },
+                            [Link::ToNext],
+                        )?;
                     }
-                    writeln!(out, "\taddi\t$sp, $sp, {}", regs_to_restore.len() * 2)?;
+                    // writeln!(out, "\taddi\t$sp, $sp, {}", regs_to_restore.len() * 2)?;
+                    self.emit_instr(
+                        out,
+                        CheckInstr::RRI {
+                            opcode: OpcodeRegRegImm::ADDI,
+                            reg1: Reg::Sp.into(),
+                            reg2: Reg::Sp.into(),
+                            imm10: (regs_to_restore.len() * 2) as i32,
+                        },
+                        [Link::ToNext],
+                    )?;
                     self.comment(out, "</Restore>")?;
                 } else {
                     eprintln!(
@@ -465,7 +537,17 @@ impl CodeGen {
                 self.comment(out, &format!("<Preserve regs=[{reg_list}]>"))?;
 
                 // Bump the stack pointer to make room for the registers we're about to save.
-                writeln!(out, "\tsubi\t$sp, $sp, {}", regs.len() * 2)?;
+                // writeln!(out, "\tsubi\t$sp, $sp, {}", regs.len() * 2)?;
+                self.emit_instr(
+                    out,
+                    CheckInstr::RRI {
+                        opcode: OpcodeRegRegImm::SUBI,
+                        reg1: Reg::Sp.into(),
+                        reg2: Reg::Sp.into(),
+                        imm10: (regs.len() * 2) as i32,
+                    },
+                    [Link::ToNext],
+                )?;
 
                 // Save the registers.
                 for (i, reg) in regs.iter().enumerate() {
@@ -476,11 +558,31 @@ impl CodeGen {
                         let stack_index =
                             callee_regs_to_save.iter().position(|r| r == reg).unwrap();
                         let offset = (stack_index * std::mem::size_of::<u16>()) as isize;
-                        let comment = "Update previously saved register";
-                        writeln!(out, "\tsw\t{offset}($sp), {reg} ; {comment}")?;
+                        // let comment = "Update previously saved register";
+                        // writeln!(out, "\tsw\t{offset}($sp), {reg} ; {comment}")?;
+                        self.emit_instr(
+                            out,
+                            CheckInstr::RRI {
+                                opcode: OpcodeRegRegImm::SW,
+                                reg1: Reg::Sp.into(),
+                                reg2: (*reg).into(),
+                                imm10: offset as i32,
+                            },
+                            [Link::ToNext],
+                        )?;
                     } else {
-                        let offset = (i * std::mem::size_of::<u16>()) as isize;
-                        writeln!(out, "\tsw\t{offset}($sp), {reg}")?;
+                        let offset = (i * std::mem::size_of::<u16>()) as i32;
+                        // writeln!(out, "\tsw\t{offset}($sp), {reg}")?;
+                        self.emit_instr(
+                            out,
+                            CheckInstr::RRI {
+                                opcode: OpcodeRegRegImm::SW,
+                                reg1: Reg::Sp.into(),
+                                reg2: (*reg).into(),
+                                imm10: offset,
+                            },
+                            [Link::ToNext],
+                        )?;
                     }
                 }
 
@@ -523,7 +625,16 @@ impl CodeGen {
                     _ => panic!("Test argument of `if` statement is not a register."),
                 };
 
-                writeln!(out, "\tbf\t{test_reg_resolved}, {if_else}")?;
+                // writeln!(out, "\tbf\t{test_reg_resolved}, {if_else}")?;
+                self.emit_instr(
+                    out,
+                    CheckInstr::RI {
+                        opcode: OpcodeRegImm::BF,
+                        reg: (*test_reg_resolved).into(),
+                        imm: Self::DUMMY_LABEL_OFFSET,
+                    },
+                    [Link::JumpToLabel(Cow::Borrowed(&if_else)), Link::ToNext],
+                )?;
 
                 self.comment(out, "<IfElse.Consequent>")?;
                 for stmt in consequent {
@@ -531,9 +642,19 @@ impl CodeGen {
                 }
                 self.comment(out, "</IfElse.Consequent>")?;
 
-                writeln!(out, "\tj\t{if_end}")?;
+                // writeln!(out, "\tj\t{if_end}")?;
+                self.emit_instr(
+                    out,
+                    CheckInstr::A {
+                        opcode: OpcodeAddr::J,
+                        offset: Self::DUMMY_LABEL_OFFSET,
+                    },
+                    [Link::JumpToLabel(Cow::Borrowed(&if_end)), Link::ToNext],
+                )?;
+
                 self.comment(out, "<IfElse.Alternative>")?;
-                writeln!(out, "{if_else}:")?;
+                // writeln!(out, "{if_else}:")?;
+                self.emit_label(out, if_else)?;
 
                 if let Some(alternative) = alternative {
                     for stmt in alternative {
@@ -541,7 +662,8 @@ impl CodeGen {
                     }
                 }
 
-                writeln!(out, "{if_end}:")?;
+                // writeln!(out, "{if_end}:")?;
+                self.emit_label(out, if_end)?;
                 self.comment(out, "</IfElse.Alternative>")?;
                 self.comment(out, "</IfElse>")?;
                 writeln!(out)?;
@@ -557,9 +679,18 @@ impl CodeGen {
                 let loop_cond = self.label_indexes.fresh(".while_cond");
 
                 self.comment(out, "<While>")?;
-                writeln!(out, "\tj\t{loop_cond}")?;
+                // writeln!(out, "\tj\t{loop_cond}")?;
+                self.emit_instr(
+                    out,
+                    CheckInstr::A {
+                        opcode: OpcodeAddr::J,
+                        offset: Self::DUMMY_LABEL_OFFSET,
+                    },
+                    [Link::JumpToLabel(Cow::Borrowed(&loop_cond)), Link::ToNext],
+                )?;
                 self.comment(out, "<While.Body>")?;
-                writeln!(out, "{loop_top}:")?;
+                // writeln!(out, "{loop_top}:")?;
+                self.emit_label(out, loop_top.clone())?;
                 for stmt in body {
                     self.compile_stmt(out, stmt)?;
                 }
@@ -572,7 +703,8 @@ impl CodeGen {
                     self.comment(out, "</While.Update>")?;
                 }
                 self.comment(out, "<While.Cond>")?;
-                writeln!(out, "{loop_cond}:")?;
+                // writeln!(out, "{loop_cond}:")?;
+                self.emit_label(out, loop_cond)?;
                 for instr in test_cond {
                     self.compile_instr(out, instr)?;
                 }
@@ -591,7 +723,16 @@ impl CodeGen {
                     }
                     _ => panic!("Test argument of `while` loop is not a register."),
                 };
-                writeln!(out, "\tbt\t{test_arg_resolved}, {loop_top}")?;
+                // writeln!(out, "\tbt\t{test_arg_resolved}, {loop_top}")?;
+                self.emit_instr(
+                    out,
+                    CheckInstr::RI {
+                        opcode: OpcodeRegImm::BT,
+                        reg: (*test_arg_resolved).into(),
+                        imm: Self::DUMMY_LABEL_OFFSET,
+                    },
+                    [Link::JumpToLabel(Cow::Borrowed(&loop_top)), Link::ToNext],
+                )?;
                 self.comment(out, "</While>")?;
                 writeln!(out)?;
             }
@@ -599,11 +740,20 @@ impl CodeGen {
             Stmt::Loop { body } => {
                 let loop_top = self.label_indexes.fresh(".loop_top");
                 self.comment(out, "<Loop>")?;
-                writeln!(out, "{loop_top}:")?;
+                // writeln!(out, "{loop_top}:")?;
+                self.emit_label(out, loop_top.clone())?;
                 for stmt in body {
                     self.compile_stmt(out, stmt)?;
                 }
-                writeln!(out, "\tj\t{loop_top}")?;
+                // writeln!(out, "\tj\t{loop_top}")?;
+                self.emit_instr(
+                    out,
+                    CheckInstr::A {
+                        opcode: OpcodeAddr::J,
+                        offset: Self::DUMMY_LABEL_OFFSET,
+                    },
+                    [Link::JumpToLabel(loop_top.into()), Link::ToNext],
+                )?;
                 self.comment(out, "</Loop>")?;
                 writeln!(out)?;
             }
@@ -652,17 +802,31 @@ impl CodeGen {
     }
 
     fn compile_instr(&mut self, out: &mut dyn io::Write, instr: &Instr) -> io::Result<()> {
+        let mut links = vec![];
+        match CheckInstrTranslator::new(&self.consts).translate(
+            &instr.op,
+            &instr.args[..],
+            &mut links,
+        ) {
+            Ok(check_instr) => {
+                self.emit_instr_no_write(check_instr, links)?;
+            }
+            Err(e) => {
+                eprintln!("Error [{}#{}]:", self.filename(), self.current_subr_name());
+                eprintln!("\tInvalid instruction: {e}");
+                std::process::exit(1);
+            }
+        };
+
         write!(out, "\t{}\t", instr.op)?;
-        // write the first arg, then comma separate the rest
-        let mut args = instr.args.iter();
-        if let Some(arg) = args.next() {
-            self.compile_instr_rvalue(out, arg)?;
-        }
-        for arg in args {
-            write!(out, ", ")?;
+        for (idx, arg) in instr.args.iter().enumerate() {
+            if idx > 0 {
+                write!(out, ", ")?;
+            }
             self.compile_instr_rvalue(out, arg)?;
         }
         writeln!(out)?;
+
         Ok(())
     }
 
@@ -701,7 +865,7 @@ impl CodeGen {
         }
     }
 
-    fn compile_instr_lvalue(&mut self, out: &mut dyn io::Write, lvalue: &LValue) -> io::Result<()> {
+    fn compile_instr_lvalue(&self, out: &mut dyn io::Write, lvalue: &LValue) -> io::Result<()> {
         match lvalue {
             LValue::Reg(reg) => write!(out, "{}", reg),
             LValue::Indirection { base, offset } => {
@@ -785,6 +949,8 @@ struct SubrInfo {
     subr_name: String,
     is_isr: bool,
     callee_regs_to_save: Vec<Reg>,
+    // The control flow graph for the subroutine's body.
+    cfg: Cfg,
 }
 
 struct LabelIndexes {
