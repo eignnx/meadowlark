@@ -415,9 +415,11 @@ impl CodeGen {
                 .filter(|r| !r.is_callee_saved())
                 .map(|r| format!("`{r}`"))
                 .collect::<Vec<_>>();
-            let unneeded = unneeded.join(", ");
-            eprintln!("Warning [{}#{}]:", self.filename(), subr_name);
-            eprintln!("\tRegister(s) {unneeded} are not callee saved and usually do not need to be preserved." );
+            if !unneeded.is_empty() {
+                let unneeded = unneeded.join(", ");
+                eprintln!("Warning [{}#{}]:", self.filename(), subr_name);
+                eprintln!("\tRegister(s) {unneeded} are not callee saved and usually do not need to be preserved." );
+            }
         }
 
         let reg_list = preserve_regs
