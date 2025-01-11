@@ -23,7 +23,7 @@ pub fn defs_and_uses(
         },
 
         CheckInstr::R { opcode, reg } => match opcode {
-            OpcodeReg::JR => uses.extend([reg.clone()]),
+            OpcodeReg::JR => uses.extend([reg.uses()]),
             OpcodeReg::MVLO => {
                 uses.extend([StgLoc::Lo]);
                 defs.extend([reg.clone()]);
@@ -45,7 +45,7 @@ pub fn defs_and_uses(
                 defs.extend(Reg::CALLER_SAVED.iter().map(|&r| r.into()));
             }
             OpcodeRegImm::LI => defs.extend([reg.clone()]),
-            OpcodeRegImm::BT | OpcodeRegImm::BF => uses.extend([reg.clone()]),
+            OpcodeRegImm::BT | OpcodeRegImm::BF => uses.extend([reg.uses()]),
         },
 
         CheckInstr::RR { opcode, reg1, reg2 } => match opcode {
@@ -55,7 +55,7 @@ pub fn defs_and_uses(
                 defs.extend([link_reg.clone()]);
                 defs.extend(Reg::CALLER_SAVED.iter().map(|&r| r.into()));
 
-                uses.extend([jump_addr_reg.clone()]);
+                uses.extend([jump_addr_reg.uses()]);
             }
             OpcodeRegReg::MV
             | OpcodeRegReg::NOT
@@ -65,7 +65,7 @@ pub fn defs_and_uses(
             | OpcodeRegReg::TNZ => {
                 let (rd, rs) = (reg1, reg2);
                 defs.extend([rd.clone()]);
-                uses.extend([rs.clone()]);
+                uses.extend([rs.uses()]);
             }
             OpcodeRegReg::MUL | OpcodeRegReg::MULU | OpcodeRegReg::DIV | OpcodeRegReg::DIVU => {
                 defs.extend([StgLoc::Lo, StgLoc::Hi]);
@@ -95,7 +95,7 @@ pub fn defs_and_uses(
             | OpcodeRegRegReg::TLTU
             | OpcodeRegRegReg::TGEU => {
                 defs.extend([rd.clone()]);
-                uses.extend([rs.clone(), rt.clone()]);
+                uses.extend([rs.uses(), rt.uses()]);
             }
         },
 
@@ -111,21 +111,21 @@ pub fn defs_and_uses(
 
                 match src_addr_reg.clone().try_into() {
                     Ok(Reg::Sp) => {
-                        uses.extend([src_addr_reg.clone(), StgLoc::Stack(*imm10)]);
+                        uses.extend([src_addr_reg.uses(), StgLoc::Stack(*imm10)]);
                     }
                     Ok(Reg::Gp) => {
-                        uses.extend([src_addr_reg.clone(), StgLoc::Global(*imm10)]);
+                        uses.extend([src_addr_reg.uses(), StgLoc::Global(*imm10)]);
                     }
-                    _ => uses.extend([src_addr_reg.clone()]),
+                    _ => uses.extend([src_addr_reg.uses()]),
                 }
             }
             OpcodeRegRegImm::SW | OpcodeRegRegImm::SB => {
                 let (dest_addr_reg, rs) = (reg1, reg2);
-                uses.extend([dest_addr_reg.clone(), rs.clone()]);
+                uses.extend([dest_addr_reg.uses(), rs.clone()]);
                 match dest_addr_reg.clone().try_into() {
                     Ok(Reg::Sp) => defs.extend([StgLoc::Stack(*imm10)]),
                     Ok(Reg::Gp) => defs.extend([StgLoc::Global(*imm10)]),
-                    _ => {}
+                    _ => {} // Ought to add `UniqueMem{..}` here, but that adds clutter to interference graph with no benefit.
                 }
             }
             OpcodeRegRegImm::ADDI
@@ -135,7 +135,7 @@ pub fn defs_and_uses(
             | OpcodeRegRegImm::ANDI => {
                 let (rd, rs) = (reg1, reg2);
                 defs.extend([rd.clone()]);
-                uses.extend([rs.clone()]);
+                uses.extend([rs.uses()]);
             }
         },
     }
