@@ -9,7 +9,7 @@ use crate::check::interferences::Interferences;
 use crate::check::stg_loc::StgLoc;
 use crate::debug_flags;
 use crate::{
-    ast::*,
+    ast::{const_val::ConstValue, *},
     check::{
         cfg::{Cfg, Link, NodeId},
         check_instr::{CheckInstr, CheckInstrTranslator},

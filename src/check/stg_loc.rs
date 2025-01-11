@@ -7,7 +7,7 @@ use std::{
 
 use lark_vm::cpu::regs::Reg;
 
-use crate::ast::{Base, ConstValue, LValue, Offset, RValue};
+use crate::ast::{const_val::ConstValue, Base, LValue, Offset, RValue};
 
 /// Represents a **Storage Location**.
 ///

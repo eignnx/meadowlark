@@ -1,6 +1,9 @@
-use std::{collections::BTreeMap, fmt};
+use std::fmt;
 
+use const_val::ConstValue;
 use lark_vm::cpu::regs::Reg;
+
+pub mod const_val;
 
 #[derive(Debug)]
 pub enum Item {
@@ -18,65 +21,6 @@ pub enum Item {
         body: Vec<Stmt>,
     },
     Directive(Directive),
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum BinOp {
-    Add,
-    Sub,
-    Mul,
-    Div,
-    Mod,
-    And,
-    Or,
-    Xor,
-    Shl,
-    Shr,
-}
-
-impl BinOp {
-    pub(crate) fn eval(&self, x: i32, y: i32) -> i32 {
-        match self {
-            BinOp::Add => x + y,
-            BinOp::Sub => x - y,
-            BinOp::Mul => x * y,
-            BinOp::Div => x / y,
-            BinOp::Mod => x % y,
-            BinOp::And => x & y,
-            BinOp::Or => x | y,
-            BinOp::Xor => x ^ y,
-            BinOp::Shl => x << y,
-            BinOp::Shr => x >> y,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum ConstValue {
-    Uint(u16),
-    Int(i16),
-    Char(u8),
-    ConstAlias(Var),
-    BinOp(Box<ConstValue>, BinOp, Box<ConstValue>),
-}
-
-impl ConstValue {
-    pub fn evaluate(&self, aliases: &BTreeMap<Var, ConstValue>) -> Option<i32> {
-        match self {
-            ConstValue::Uint(u) => Some(*u as i32),
-            ConstValue::Int(i) => Some(*i as i32),
-            ConstValue::Char(c) => Some(*c as i32),
-            ConstValue::ConstAlias(alias) => {
-                let value = aliases.get(alias)?;
-                value.evaluate(aliases)
-            }
-            ConstValue::BinOp(lhs, op, rhs) => {
-                let lhs = lhs.evaluate(aliases)?;
-                let rhs = rhs.evaluate(aliases)?;
-                Some(op.eval(lhs, rhs))
-            }
-        }
-    }
 }
 
 #[derive(Debug)]
