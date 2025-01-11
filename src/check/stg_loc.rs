@@ -7,7 +7,11 @@ use std::{
 
 use lark_vm::cpu::regs::Reg;
 
-use crate::ast::{const_val::ConstValue, Base, LValue, Offset, RValue};
+use crate::ast::{
+    const_val::ConstValue,
+    lvalue::{Base, Displacement, LValue},
+    RValue,
+};
 
 /// Represents a **Storage Location**.
 ///
@@ -144,15 +148,15 @@ impl<'a> RValueToStgLocTranslator<'a> {
     }
 
     /// Returns `Err(const_name)` if the const alias is undefined.
-    fn interpret_offset(&self, offset: &Offset) -> Result<i32, String> {
+    fn interpret_offset(&self, offset: &Displacement) -> Result<i32, String> {
         match offset {
-            Offset::I10(i) => Ok(*i as i32),
-            Offset::Const(name) => self
+            Displacement::I10(i) => Ok(*i as i32),
+            Displacement::Const(name) => self
                 .consts
                 .get(name)
                 .ok_or_else(|| name.clone())
                 .and_then(|x| x.evaluate(self.consts).ok_or_else(|| name.clone())),
-            Offset::NegatedConst(name) => self
+            Displacement::NegatedConst(name) => self
                 .consts
                 .get(name)
                 .ok_or_else(|| name.clone())
@@ -164,7 +168,7 @@ impl<'a> RValueToStgLocTranslator<'a> {
     fn interpret_indirection_base_offset(
         &self,
         base: &Base,
-        offset: Option<&Offset>,
+        offset: Option<&Displacement>,
     ) -> Result<StgLoc, String> {
         let offset = if let Some(offset) = offset {
             self.interpret_offset(offset)?
@@ -204,11 +208,12 @@ impl<'a> RValueToStgLocTranslator<'a> {
         match rvalue {
             RValue::Alias(name) => Ok(StgLoc::Alias(name.clone())),
             RValue::LValue(LValue::Reg(reg)) => Ok(StgLoc::Reg(*reg)),
-            RValue::LValue(LValue::Indirection { base, offset }) => {
-                let base = base.clone().unwrap_or(Base::Reg(Reg::Zero));
-                self.interpret_indirection_base_offset(&base, offset.as_ref())
-                    .map_err(RValueToStgLocError::ConstAliasUndefined)
-            }
+            RValue::LValue(LValue::Indirection {
+                base,
+                displacement: offset,
+            }) => self
+                .interpret_indirection_base_offset(&base, offset.as_ref())
+                .map_err(RValueToStgLocError::ConstAliasUndefined),
             RValue::Uint(_)
             | RValue::Int(_)
             | RValue::Char(_)

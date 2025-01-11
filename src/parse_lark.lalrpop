@@ -1,7 +1,7 @@
 use lalrpop_util::ParseError;
 
 use lark_vm::cpu::regs::Reg;
-use crate::{UserError, ast::*};
+use crate::{UserError, ast::{const_val::*, lvalue::*}, ast::*};
 
 grammar;
 
@@ -238,17 +238,13 @@ CharLit: u8 = {
 
 LValue: LValue = {
     <reg: Reg> => LValue::Reg(reg),
-    "[" <offset: Offset> "]" => LValue::Indirection {
-        base: None,
-        offset: Some(offset),
-    },
     "[" <base: Base> "]" => LValue::Indirection {
-        base: Some(base),
-        offset: None,
+        base,
+        displacement: None,
     },
-    "[" <base: Base>  <offset: Offset> "]" => LValue::Indirection {
-        base: Some(base),
-        offset: Some(offset),
+    "[" <base: Base>  <displacement: Displacement> "]" => LValue::Indirection {
+        base,
+        displacement: Some(displacement),
     },
 };
 
@@ -257,10 +253,10 @@ Base: Base = {
     <alias_name: Ident> => Base::Alias(alias_name),
 };
 
-Offset: Offset = {
+Displacement: Displacement = {
     <l:@L> <signed: Signed> <r: @R> =>? {
         if (-512..512).contains(&signed) {
-            Ok(Offset::I10(signed))
+            Ok(Displacement::I10(signed))
         } else {
             Err(ParseError::User {
                 error: UserError {
@@ -270,8 +266,8 @@ Offset: Offset = {
             })
         }
     },
-    "+" <konst: ConstIdent> => Offset::Const(konst),
-    "-" <konst: ConstIdent> => Offset::NegatedConst(konst),
+    "+" <konst: ConstIdent> => Displacement::Const(konst),
+    "-" <konst: ConstIdent> => Displacement::NegatedConst(konst),
 };
 
 Integer: RValue = {

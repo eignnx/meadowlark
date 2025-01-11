@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, str::FromStr};
 
 use lark_vm::cpu::instr::{self, ops::*};
 
-use crate::ast::{const_val::ConstValue, LValue, RValue};
+use crate::ast::{const_val::ConstValue, lvalue::LValue, RValue};
 
 use super::{
     cfg::Link,

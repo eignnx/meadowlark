@@ -4,6 +4,7 @@ use std::io;
 use std::path::PathBuf;
 
 use lark_vm::cpu::{instr::ops::*, regs::Reg};
+use lvalue::{Base, Displacement, LValue};
 
 use crate::check::interferences::Interferences;
 use crate::check::stg_loc::StgLoc;
@@ -923,11 +924,14 @@ impl CodeGen {
     fn compile_instr_lvalue(&self, out: &mut dyn io::Write, lvalue: &LValue) -> io::Result<()> {
         match lvalue {
             LValue::Reg(reg) => write!(out, "{}", reg),
-            LValue::Indirection { base, offset } => {
+            LValue::Indirection {
+                base,
+                displacement: offset,
+            } => {
                 if let Some(offset) = offset {
                     match offset {
-                        Offset::I10(i) => write!(out, "{}", i)?,
-                        Offset::Const(name) => {
+                        Displacement::I10(i) => write!(out, "{}", i)?,
+                        Displacement::Const(name) => {
                             if self.consts.contains_key(name) {
                                 write!(out, "{name}")?;
                             } else {
@@ -940,7 +944,7 @@ impl CodeGen {
                                 std::process::exit(1);
                             }
                         }
-                        Offset::NegatedConst(name) => {
+                        Displacement::NegatedConst(name) => {
                             if self.consts.contains_key(name) {
                                 write!(out, "-{name}")?;
                             } else {
@@ -959,21 +963,15 @@ impl CodeGen {
                 }
 
                 write!(out, "(")?;
-                if let Some(base) = base {
-                    match base {
-                        Base::Reg(reg) => write!(out, "{reg}")?,
-                        Base::Alias(name) => {
-                            if let Some(resolved) = self.var_aliases.get(name) {
-                                self.compile_instr_lvalue(out, &resolved.clone())?;
-                            } else {
-                                eprintln!(
-                                    "Error [{}#{}]:",
-                                    self.filename(),
-                                    self.current_subr_name()
-                                );
-                                eprintln!("\tUndefined alias `{name}`.");
-                                std::process::exit(1);
-                            }
+                match base {
+                    Base::Reg(reg) => write!(out, "{reg}")?,
+                    Base::Alias(name) => {
+                        if let Some(resolved) = self.var_aliases.get(name) {
+                            self.compile_instr_lvalue(out, &resolved.clone())?;
+                        } else {
+                            eprintln!("Error [{}#{}]:", self.filename(), self.current_subr_name());
+                            eprintln!("\tUndefined alias `{name}`.");
+                            std::process::exit(1);
                         }
                     }
                 }

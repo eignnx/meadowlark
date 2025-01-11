@@ -2,8 +2,10 @@ use std::fmt;
 
 use const_val::ConstValue;
 use lark_vm::cpu::regs::Reg;
+use lvalue::LValue;
 
 pub mod const_val;
+pub mod lvalue;
 
 #[derive(Debug)]
 pub enum Item {
@@ -45,87 +47,6 @@ pub enum AliasBinding {
         field_bindings: Vec<AliasBinding>,
     },
 }
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Base {
-    Reg(Reg),
-    Alias(Var),
-}
-
-impl fmt::Display for Base {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Base::Reg(reg) => write!(f, "{}", reg),
-            Base::Alias(var) => write!(f, "{}", var),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Offset {
-    I10(i16),
-    Const(Var),
-    NegatedConst(Var),
-}
-
-impl fmt::Display for Offset {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Offset::I10(i) => write!(f, "{}", i),
-            Offset::Const(var) => write!(f, "+{}", var),
-            Offset::NegatedConst(var) => write!(f, "-{}", var),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LValue {
-    /// Example: `$t0`, `$rv`
-    Reg(Reg),
-
-    /// # Examples
-    ///
-    /// | Syntax                | Equivalent          |
-    /// |:----------------------|--------------------:|
-    /// | `[$a0]`               | `0($a0)`            |
-    /// | `[some_alias]`        | `0(some_alias)`     |
-    /// | `[$a0 + 4]`           | `4($a0)`            |
-    /// | `[$a0 - 4]`           | `-4($a0)`           |
-    /// | `[$a0 - MY_CONSTANT]` | `-MY_CONSTANT($a0)` |
-    /// | `[some_arg + 4]`      | `4(some_arg)`       |
-    Indirection {
-        base: Option<Base>,
-        offset: Option<Offset>,
-    },
-}
-
-impl LValue {
-    pub fn is_arg_reg(&self) -> bool {
-        match self {
-            LValue::Reg(r) => r.is_argument(),
-            _ => false,
-        }
-    }
-}
-
-impl fmt::Display for LValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            LValue::Reg(reg) => write!(f, "{}", reg),
-            LValue::Indirection { base, offset } => {
-                write!(f, "[")?;
-                if let Some(base) = base {
-                    write!(f, "{}", base)?;
-                }
-                if let Some(offset) = offset {
-                    write!(f, " + {}", offset)?;
-                }
-                write!(f, "]")
-            }
-        }
-    }
-}
-
 pub type Var = String;
 
 #[derive(Debug)]
