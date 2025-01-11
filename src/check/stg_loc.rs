@@ -1,6 +1,8 @@
 use std::{
+    cell::Cell,
     collections::BTreeMap,
     fmt::{self},
+    sync::Mutex,
 };
 
 use lark_vm::cpu::regs::Reg;
@@ -34,7 +36,59 @@ pub enum StgLoc {
     /// The CPU register `$HI`. Holds the upper two bytes of a multiplication result.
     /// Holds the remainder after a division.
     Hi,
+
+    /// In general, we can't track memory accesses like `sw [$t0], src`. Instead we'll
+    /// give them a unique ID every time we encounter one. But we'll retain info on the
+    /// **uses** of registers or aliases.
+    UniqueMem {
+        unique_id: usize,
+        reg_used: Option<Reg>,
+        alias_used: Option<String>,
+    },
 }
+
+impl StgLoc {
+    pub fn uses(&self) -> Self {
+        match self {
+            Self::Alias(..)
+            | StgLoc::Reg(..)
+            | StgLoc::Stack(..)
+            | StgLoc::Global(..)
+            | StgLoc::Lo
+            | StgLoc::Hi => self.clone(),
+
+            StgLoc::UniqueMem {
+                reg_used: Some(reg),
+                alias_used: None,
+                ..
+            } => (*reg).into(),
+
+            StgLoc::UniqueMem {
+                reg_used: None,
+                alias_used: Some(alias),
+                ..
+            } => Self::Alias(alias.clone()),
+
+            StgLoc::UniqueMem {
+                unique_id,
+                reg_used: None,
+                alias_used: None,
+            } => StgLoc::UniqueMem {
+                unique_id: *unique_id,
+                reg_used: None,
+                alias_used: None,
+            },
+
+            StgLoc::UniqueMem {
+                reg_used: Some(_),
+                alias_used: Some(_),
+                ..
+            } => unreachable!(),
+        }
+    }
+}
+
+static MEM_ACCESS_ID: Mutex<Cell<usize>> = Mutex::new(Cell::new(0));
 
 impl fmt::Display for StgLoc {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -45,6 +99,16 @@ impl fmt::Display for StgLoc {
             StgLoc::Global(offset) => write!(f, "[$gp{offset:+}]"),
             StgLoc::Lo => write!(f, "$LO"),
             StgLoc::Hi => write!(f, "$HI"),
+            StgLoc::UniqueMem {
+                unique_id,
+                reg_used,
+                alias_used,
+            } => match (reg_used, alias_used) {
+                (Some(reg), None) => write!(f, "M[#{unique_id}, {reg}]"),
+                (None, Some(alias)) => write!(f, "M[#{unique_id}, {alias}]"),
+                (None, None) => write!(f, "M[#{unique_id}]"),
+                (Some(_), Some(_)) => unreachable!(),
+            },
         }
     }
 }
@@ -111,7 +175,28 @@ impl<'a> RValueToStgLocTranslator<'a> {
         match base {
             Base::Reg(Reg::Sp) => Ok(StgLoc::Stack(offset)),
             Base::Reg(Reg::Gp) => Ok(StgLoc::Global(offset)),
-            Base::Reg(_) | Base::Alias(_) => todo!("translate indirection base: {base:?}"),
+            Base::Reg(reg) => {
+                let mut id_lock = MEM_ACCESS_ID.lock().unwrap();
+                let id_ref = id_lock.get_mut();
+                let unique_id = *id_ref;
+                *id_ref += 1;
+                Ok(StgLoc::UniqueMem {
+                    unique_id,
+                    reg_used: Some(*reg),
+                    alias_used: None,
+                })
+            }
+            Base::Alias(alias) => {
+                let mut id_lock = MEM_ACCESS_ID.lock().unwrap();
+                let id_ref = id_lock.get_mut();
+                let unique_id = *id_ref;
+                *id_ref += 1;
+                Ok(StgLoc::UniqueMem {
+                    unique_id,
+                    reg_used: None,
+                    alias_used: Some(alias.clone()),
+                })
+            }
         }
     }
 
