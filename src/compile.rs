@@ -168,26 +168,19 @@ impl CodeGen {
                         write!(out, ", ")?;
                     }
                     match d {
-                        RValue::Alias(name) => {
+                        RValue::ConstAlias(name) => {
                             if self.consts.contains_key(name) {
                                 write!(out, "{name}")?;
-                            } else if self.var_aliases.contains_key(name) {
-                                eprintln!(
-                                    "Error [{}#{}]:",
-                                    self.filename(),
-                                    self.current_subr_name()
-                                );
-                                eprintln!("\tA variable reference in a `[[data(..)]]` directive cannot refer to a runtime value. It must be const. `{name}`.");
-                                std::process::exit(1);
                             } else {
-                                eprintln!(
-                                    "Error [{}#{}]:",
-                                    self.filename(),
-                                    self.current_subr_name()
-                                );
-                                eprintln!("\tUnbound variable: `{name}`");
+                                eprintln!("Error [{}#<directive {:?}>]:", self.filename(), item);
+                                eprintln!("\tUnbound constant: `{name}`");
                                 std::process::exit(1);
                             }
+                        }
+                        RValue::LValue(lval) => {
+                            eprintln!("Error [{}#<directive {:?}>]:", self.filename(), item);
+                            eprintln!("\tA `[[data(..)]]` directive cannot refer to a runtime value. It must be const. `{lval}`.");
+                            std::process::exit(1);
                         }
                         RValue::Uint(u) => write!(out, "{u}")?,
                         other => {
@@ -394,6 +387,11 @@ impl CodeGen {
                             self.warn_register_already_assigned(subr_name, *a);
                         }
                     }
+
+                    LValue::Alias(name) => {
+                        todo!("aliases to other aliases are not yet supported. `{name}`");
+                    }
+
                     LValue::Indirection { .. } | LValue::Reg(..) => {
                         // TODO: check liveness of the specific memory address?
                         // For example: "Warn: [$sp-4] is already aliased by another var `blah`."
@@ -504,7 +502,7 @@ impl CodeGen {
         let prev_use = self
             .var_aliases
             .iter()
-            .find_map(|(vname, l)| l.is_arg_reg().then_some(vname))
+            .find_map(|(vname, l)| l.is_arg_reg(&self.var_aliases).then_some(vname))
             .unwrap();
         eprintln!("Warning [{}#{}]:", self.filename(), name);
         eprintln!("\tArgument register `{reg}` already assigned to argument `{prev_use}`.");
@@ -673,7 +671,7 @@ impl CodeGen {
 
                 let test_reg_resolved = match test_reg {
                     RValue::LValue(LValue::Reg(reg)) => reg,
-                    RValue::Alias(name) => {
+                    RValue::LValue(LValue::Alias(name)) => {
                         let resolved = self
                             .var_aliases
                             .get(name)
@@ -769,7 +767,7 @@ impl CodeGen {
                 self.comment(out, "<While.Cond>")?;
                 let test_arg_resolved = match test_arg {
                     RValue::LValue(LValue::Reg(reg)) => reg,
-                    RValue::Alias(name) => {
+                    RValue::LValue(LValue::Alias(name)) => {
                         let resolved = self
                             .var_aliases
                             .get(name)
@@ -897,7 +895,7 @@ impl CodeGen {
             }
             RValue::Label(name) => write!(out, "{}", name),
 
-            RValue::Alias(name) => {
+            RValue::LValue(LValue::Alias(name)) => {
                 if let Some(resolved) = self.var_aliases.get(name) {
                     self.compile_instr_lvalue(out, &resolved.clone())
                 } else {
@@ -924,6 +922,18 @@ impl CodeGen {
     fn compile_instr_lvalue(&self, out: &mut dyn io::Write, lvalue: &LValue) -> io::Result<()> {
         match lvalue {
             LValue::Reg(reg) => write!(out, "{}", reg),
+            LValue::Alias(name) => {
+                if let Some(resolved) = self.var_aliases.get(name) {
+                    if let LValue::Alias(name) = resolved {
+                        todo!("aliases to other aliases are not yet supported. `{name}`");
+                    }
+                    self.compile_instr_lvalue(out, &resolved.clone())
+                } else {
+                    eprintln!("Error [{}#{}]:", self.filename(), self.current_subr_name());
+                    eprintln!("\tUndefined alias `{}`.", name);
+                    std::process::exit(1);
+                }
+            }
             LValue::Indirection {
                 base,
                 displacement: offset,

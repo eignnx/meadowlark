@@ -101,9 +101,6 @@ pub enum RValue {
     /// Example: `MY_CONST`
     ConstAlias(Var),
 
-    /// Example: `some_arg`
-    Alias(Var),
-
     LValue(LValue),
 }
 
@@ -116,7 +113,6 @@ impl fmt::Display for RValue {
             RValue::String(str) => write!(f, "{:?}", str),
             RValue::Label(lbl) => write!(f, "&{}", lbl),
             RValue::ConstAlias(name) => write!(f, "{name}"),
-            RValue::Alias(name) => write!(f, "{name}"),
             RValue::LValue(lvalue) => write!(f, "{lvalue}"),
         }
     }

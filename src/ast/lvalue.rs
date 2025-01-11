@@ -1,4 +1,5 @@
 use core::fmt;
+use std::collections::HashMap;
 
 use lark_vm::cpu::regs::Reg;
 
@@ -8,6 +9,9 @@ use super::Var;
 pub enum LValue {
     /// Example: `$t0`, `$rv`
     Reg(Reg),
+
+    /// Example: `my_tmp`
+    Alias(Var),
 
     /// # Examples
     ///
@@ -26,9 +30,14 @@ pub enum LValue {
 }
 
 impl LValue {
-    pub fn is_arg_reg(&self) -> bool {
+    pub fn is_arg_reg(&self, aliases: &HashMap<Var, LValue>) -> bool {
         match self {
             LValue::Reg(r) => r.is_argument(),
+            LValue::Alias(var) => match aliases.get(var).expect("undefined alias") {
+                LValue::Reg(r) => r.is_argument(),
+                LValue::Alias(name) => todo!("aliases to aliases are not yet supported. `{name}`"),
+                LValue::Indirection { .. } => false,
+            },
             _ => false,
         }
     }
@@ -38,6 +47,7 @@ impl fmt::Display for LValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             LValue::Reg(reg) => write!(f, "{}", reg),
+            LValue::Alias(var) => write!(f, "{}", var),
             LValue::Indirection {
                 base,
                 displacement: offset,

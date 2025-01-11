@@ -206,13 +206,10 @@ impl<'a> RValueToStgLocTranslator<'a> {
 
     pub fn translate(&self, rvalue: &RValue) -> Result<StgLoc, RValueToStgLocError> {
         match rvalue {
-            RValue::Alias(name) => Ok(StgLoc::Alias(name.clone())),
             RValue::LValue(LValue::Reg(reg)) => Ok(StgLoc::Reg(*reg)),
-            RValue::LValue(LValue::Indirection {
-                base,
-                displacement: offset,
-            }) => self
-                .interpret_indirection_base_offset(&base, offset.as_ref())
+            RValue::LValue(LValue::Alias(name)) => Ok(StgLoc::Alias(name.clone())),
+            RValue::LValue(LValue::Indirection { base, displacement }) => self
+                .interpret_indirection_base_offset(base, displacement.as_ref())
                 .map_err(RValueToStgLocError::ConstAliasUndefined),
             RValue::Uint(_)
             | RValue::Int(_)

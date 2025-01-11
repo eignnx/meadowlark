@@ -201,7 +201,6 @@ RValue: RValue = {
         RValue::String(string_literal[1..string_literal.len()-1].to_string())
     },
     "&" <label: Ident> => RValue::Label(label.to_string()),
-    <alias_name: Ident> => RValue::Alias(alias_name.to_string()),
     <const_name: ConstIdent> => RValue::ConstAlias(const_name.to_string()),
     <lvalue: LValue> => RValue::LValue(lvalue),
 };
@@ -238,6 +237,7 @@ CharLit: u8 = {
 
 LValue: LValue = {
     <reg: Reg> => LValue::Reg(reg),
+    <alias_name: Ident> => LValue::Alias(alias_name.to_string()),
     "[" <base: Base> "]" => LValue::Indirection {
         base,
         displacement: None,
@@ -364,7 +364,7 @@ Directive: Directive = {
         let mut data = vec![];
         for (l, d, r) in [(l, first, r)].into_iter().chain(rest.into_iter()) {
             match d {
-                RValue::Alias(..) => data.push(d),
+                RValue::ConstAlias(..) => data.push(d),
                 RValue::Uint(uint) => if let Err(e) = u8::try_from(uint) {
                         return Err(ParseError::User {
                             error: UserError {
