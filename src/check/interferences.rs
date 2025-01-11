@@ -1,3 +1,4 @@
+use core::fmt;
 use std::collections::{BTreeSet, HashMap};
 
 use super::{cfg::NodeId, check_instr::CheckInstr, defs_uses, stg_loc::StgLoc};
@@ -44,5 +45,31 @@ impl Interferences {
         }
 
         Self { edges }
+    }
+}
+
+impl fmt::Display for Interferences {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let all_stg_locs = self
+            .edges
+            .keys()
+            .chain(self.edges.values().flatten())
+            .collect::<BTreeSet<_>>();
+
+        writeln!(f, "Interference graph:")?;
+
+        for stg_loc in all_stg_locs.iter() {
+            write!(f, "{stg_loc}:\t")?;
+            for neighbor in all_stg_locs
+                .iter()
+                .filter(|neighbor| self.interferes_with(stg_loc, neighbor))
+            {
+                write!(f, "{neighbor}\t")?;
+            }
+            writeln!(f)?;
+        }
+        writeln!(f)?;
+
+        Ok(())
     }
 }
