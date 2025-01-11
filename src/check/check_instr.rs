@@ -3,7 +3,7 @@ use std::{collections::BTreeMap, str::FromStr};
 
 use lark_vm::cpu::instr::{self, ops::*};
 
-use crate::ast::{ConstValue, RValue};
+use crate::ast::{ConstValue, LValue, RValue};
 
 use super::{
     cfg::Link,
@@ -204,11 +204,11 @@ impl CheckInstrTranslator<'_> {
         if let Ok(opcode) = OpcodeRegImm::from_str(op_name) {
             opcode.links(links, args);
             match args {
-                [reg, imm] => {
+                [reg, _imm] => {
                     let reg = RValueToStgLocTranslator::new(self.consts)
                         .translate(reg)
                         .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
-                    let imm = self.try_rvalue_as_i32(op_name, imm)?;
+                    let imm = 0x00FACADE; //self.try_rvalue_as_i32(op_name, imm)?;
                     return Ok(CheckInstr::RI { opcode, reg, imm });
                 }
                 _ => {
@@ -271,6 +271,54 @@ impl CheckInstrTranslator<'_> {
                         imm10: imm,
                     });
                 }
+
+                // If it looks like theres only two arguments to a store instruction, there's really
+                // 3, one is probably just an indirection.
+                [ind @ RValue::LValue(LValue::Indirection { .. }), src_reg]
+                    if matches!(opcode, OpcodeRegRegImm::SW | OpcodeRegRegImm::SB) =>
+                {
+                    let tr = RValueToStgLocTranslator::new(self.consts);
+                    let ind = tr
+                        .translate(ind)
+                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
+                    let src_reg = tr
+                        .translate(src_reg)
+                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
+
+                    return Ok(CheckInstr::RRI {
+                        opcode,
+                        reg1: ind,
+                        reg2: src_reg,
+                        imm10: 0,
+                    });
+                }
+
+                // If it looks like theres only two arguments to a load instruction, there's really
+                // 3, one is probably just an indirection.
+                [dst_reg, ind @ RValue::LValue(LValue::Indirection { .. })]
+                    if matches!(
+                        opcode,
+                        OpcodeRegRegImm::LW | OpcodeRegRegImm::LBS | OpcodeRegRegImm::LBU
+                    ) =>
+                {
+                    let tr = RValueToStgLocTranslator::new(self.consts);
+                    let dst_reg = tr
+                        .translate(dst_reg)
+                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
+                    let ind = tr
+                        .translate(ind)
+                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
+
+                    dbg!((op_name, &dst_reg, &ind));
+
+                    return Ok(CheckInstr::RRI {
+                        opcode,
+                        reg1: dst_reg,
+                        reg2: ind,
+                        imm10: 0,
+                    });
+                }
+
                 _ => {
                     return Err(InstrTranslationErr::WrongArgCount {
                         opcode: op_name.into(),
