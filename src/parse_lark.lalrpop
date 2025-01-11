@@ -1,7 +1,7 @@
 use lalrpop_util::ParseError;
 
 use lark_vm::cpu::regs::Reg;
-use crate::{UserError, ast::{const_val::*, lvalue::*}, ast::*};
+use crate::{UserError, ast::{const_val::*, lvalue::*, rvalue::*}, ast::*};
 
 grammar;
 

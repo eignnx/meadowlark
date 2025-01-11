@@ -1,20 +1,26 @@
-use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::io;
-use std::path::PathBuf;
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet, HashMap},
+    io,
+    path::PathBuf,
+};
 
 use lark_vm::cpu::{instr::ops::*, regs::Reg};
-use lvalue::{Base, Displacement, LValue};
 
-use crate::check::interferences::Interferences;
-use crate::check::stg_loc::StgLoc;
-use crate::debug_flags;
 use crate::{
-    ast::{const_val::ConstValue, *},
+    ast::{
+        const_val::ConstValue,
+        lvalue::{Base, Displacement, LValue},
+        rvalue::RValue,
+        AliasBinding, Directive, Instr, Item, Stmt, Var,
+    },
     check::{
         cfg::{Cfg, Link, NodeId},
         check_instr::{CheckInstr, CheckInstrTranslator},
+        interferences::Interferences,
+        stg_loc::StgLoc,
     },
+    debug_flags,
 };
 
 pub struct CodeGen {
