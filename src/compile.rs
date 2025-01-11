@@ -7,6 +7,7 @@ use lark_vm::cpu::{instr::ops::*, regs::Reg};
 
 use crate::check::interferences::Interferences;
 use crate::check::stg_loc::StgLoc;
+use crate::debug_flags;
 use crate::{
     ast::*,
     check::{
@@ -329,6 +330,28 @@ impl CodeGen {
                         self.current_subr_name()
                     );
                     eprintln!("\tAliases `{alias1}` and `{alias2}` are both bound to register `{binding1}` but both are simultaneously in use.");
+
+                    if debug_flags::PRINT_INTERFERENCE_GRAPH {
+                        eprintln!("{intfs}");
+                    }
+                }
+            }
+        }
+
+        // Check un-aliased register uses:
+        for (alias, binding) in alias_bindings.iter() {
+            if let &LValue::Reg(reg) = binding {
+                if intfs.interferes_with(&StgLoc::Alias(alias.clone()), &reg.into()) {
+                    eprintln!(
+                        "Warning [{}#{}]:",
+                        self.filename(),
+                        self.current_subr_name()
+                    );
+                    eprintln!("\tAlias `{alias}` is bound to register `{reg}`, but `{reg}` is used on it's own while `{alias}` is in use.");
+
+                    if debug_flags::PRINT_INTERFERENCE_GRAPH {
+                        eprintln!("{intfs}");
+                    }
                 }
             }
         }

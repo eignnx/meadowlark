@@ -13,6 +13,7 @@ pub mod ast;
 pub mod check;
 pub mod cli;
 pub mod compile;
+pub mod debug_flags;
 lalrpop_mod!(pub parse_lark);
 
 pub enum CompilationErr {
