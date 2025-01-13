@@ -9,7 +9,7 @@ fn live_ins_live_outs() {
     use lark_vm::cpu::{instr::ops::*, regs::Reg};
 
     use cfg::Cfg;
-    use check_instr::CheckInstr;
+    use check_instr::{CheckInstr, Imm};
     use interferences::Interferences;
     use stg_loc::StgLoc;
 
@@ -57,17 +57,17 @@ fn live_ins_live_outs() {
         CheckInstr::RI {
             opcode: OpcodeRegImm::LI,
             reg: StgLoc::Alias("z".to_string()),
-            imm: 10,
+            imm: Imm::Uint(10),
         },
         CheckInstr::RI {
             opcode: OpcodeRegImm::LI,
             reg: StgLoc::Alias("x".to_string()),
-            imm: 0,
+            imm: Imm::Uint(0),
         },
         CheckInstr::RI {
             opcode: OpcodeRegImm::LI,
             reg: StgLoc::Alias("y".to_string()),
-            imm: 1,
+            imm: Imm::Uint(1),
         },
         // LOOP_TOP (index 3)
         CheckInstr::RRR {
@@ -80,12 +80,12 @@ fn live_ins_live_outs() {
         CheckInstr::RI {
             opcode: OpcodeRegImm::BF,
             reg: StgLoc::Alias("cond".to_string()),
-            imm: 700, // Imm is irrelevant in this example
+            imm: Imm::Uint(700), // Imm is irrelevant in this example
         },
         CheckInstr::RI {
             opcode: OpcodeRegImm::LI,
             reg: StgLoc::Alias("tmp".to_string()),
-            imm: 2,
+            imm: Imm::Uint(2),
         },
         CheckInstr::RRR {
             opcode: OpcodeRegRegReg::SHL,
@@ -103,7 +103,7 @@ fn live_ins_live_outs() {
             opcode: OpcodeRegRegImm::ADDI,
             reg1: StgLoc::Alias("x".to_string()),
             reg2: StgLoc::Alias("x".to_string()),
-            imm10: 1,
+            imm10: Imm::Uint(1),
         },
         CheckInstr::RRR {
             opcode: OpcodeRegRegReg::ADD,
@@ -113,7 +113,7 @@ fn live_ins_live_outs() {
         },
         CheckInstr::A {
             opcode: OpcodeAddr::J,
-            offset: 3,
+            offset: Imm::Uint(3),
         },
         // LOOP_END (index 11)
         CheckInstr::RR {
@@ -138,7 +138,8 @@ fn live_ins_live_outs() {
         .with_exits([12])
         .set_non_void_subr();
 
-    let (live_ins, live_outs) = cfg.compute_live_ins_live_outs();
+    let codegen = crate::compile::CodeGen::new(None);
+    let (live_ins, live_outs) = cfg.compute_live_ins_live_outs(&codegen);
 
     for (id, instr) in cfg.stmts.iter().enumerate() {
         let ins = live_ins
@@ -165,7 +166,7 @@ fn live_ins_live_outs() {
 
     println!("================================");
 
-    let interferences = Interferences::from_live_sets(&cfg.stmts, live_outs);
+    let interferences = Interferences::from_live_sets(&cfg.stmts, live_outs, &codegen);
 
     for (a, bs) in interferences.edges.iter() {
         println!(

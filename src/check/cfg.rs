@@ -5,11 +5,14 @@ use std::{
 
 use lark_vm::cpu::regs::Reg;
 
+use crate::compile::CodeGen;
+
 use super::{check_instr::CheckInstr, defs_uses, stg_loc::StgLoc};
 
 pub type NodeId = usize;
 
 /// Control Flow Graph
+#[derive(Debug, Clone)]
 pub struct Cfg {
     pub(super) stmts: Vec<CheckInstr>,
     edges: BTreeSet<(NodeId, NodeId)>,
@@ -90,6 +93,7 @@ impl Cfg {
 
     pub fn compute_live_ins_live_outs(
         &self,
+        codegen: &CodeGen,
     ) -> (
         HashMap<NodeId, BTreeSet<StgLoc>>,
         HashMap<NodeId, BTreeSet<StgLoc>>,
@@ -114,7 +118,7 @@ impl Cfg {
             .extend(self.live_ins_on_entry.iter().cloned());
 
         loop {
-            let changed = self.update_live_sets(&mut live_ins, &mut live_outs);
+            let changed = self.update_live_sets(&mut live_ins, &mut live_outs, codegen);
 
             if !changed {
                 break;
@@ -128,6 +132,7 @@ impl Cfg {
         &self,
         live_ins: &mut HashMap<usize, BTreeSet<StgLoc>>,
         live_outs: &mut HashMap<usize, BTreeSet<StgLoc>>,
+        codegen: &CodeGen,
     ) -> bool {
         let mut changed = false;
         let mut defs_buf = BTreeSet::new();
@@ -136,7 +141,7 @@ impl Cfg {
         for (id, instr) in self.stmts.iter().enumerate().rev() {
             defs_buf.clear();
             uses_buf.clear();
-            defs_uses::defs_and_uses(instr, &mut defs_buf, &mut uses_buf);
+            defs_uses::defs_and_uses(instr, &mut defs_buf, &mut uses_buf, codegen);
 
             let outs: &mut BTreeSet<StgLoc> = live_outs.entry(id).or_default();
 

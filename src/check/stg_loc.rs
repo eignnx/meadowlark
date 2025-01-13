@@ -8,7 +8,7 @@ use std::{
 use lark_vm::cpu::regs::Reg;
 
 use crate::ast::{
-    const_val::ConstValue,
+    const_val::{ConstEvalError, ConstValue},
     lvalue::{Base, Displacement, LValue},
     rvalue::RValue,
 };
@@ -140,6 +140,16 @@ pub struct RValueToStgLocTranslator<'a> {
 pub enum RValueToStgLocError {
     ConstAliasUndefined(String),
     NonStgLocRValue(RValue),
+    MaxEvalDepthExceeded,
+}
+
+impl From<ConstEvalError> for RValueToStgLocError {
+    fn from(e: ConstEvalError) -> Self {
+        match e {
+            ConstEvalError::UndefinedAlias(name) => RValueToStgLocError::ConstAliasUndefined(name),
+            ConstEvalError::MaxEvalDepthExceeded => RValueToStgLocError::MaxEvalDepthExceeded,
+        }
+    }
 }
 
 impl<'a> RValueToStgLocTranslator<'a> {
@@ -148,20 +158,17 @@ impl<'a> RValueToStgLocTranslator<'a> {
     }
 
     /// Returns `Err(const_name)` if the const alias is undefined.
-    fn interpret_offset(&self, offset: &Displacement) -> Result<i32, String> {
+    fn interpret_offset(&self, offset: &Displacement) -> Result<i32, ConstEvalError> {
         match offset {
             Displacement::I10(i) => Ok(*i as i32),
-            Displacement::Const(name) => self
-                .consts
-                .get(name)
-                .ok_or_else(|| name.clone())
-                .and_then(|x| x.evaluate(self.consts).ok_or_else(|| name.clone())),
-            Displacement::NegatedConst(name) => self
-                .consts
-                .get(name)
-                .ok_or_else(|| name.clone())
-                .and_then(|x| x.evaluate(self.consts).ok_or_else(|| name.clone()))
-                .map(|x| -x),
+            Displacement::Const(name) => match self.consts.get(name) {
+                Some(x) => x.evaluate(self.consts),
+                None => Err(ConstEvalError::UndefinedAlias(name.clone())),
+            },
+            Displacement::NegatedConst(name) => match self.consts.get(name) {
+                Some(x) => x.evaluate(self.consts).map(|x| -x),
+                None => Err(ConstEvalError::UndefinedAlias(name.clone())),
+            },
         }
     }
 
@@ -169,7 +176,7 @@ impl<'a> RValueToStgLocTranslator<'a> {
         &self,
         base: &Base,
         offset: Option<&Displacement>,
-    ) -> Result<StgLoc, String> {
+    ) -> Result<StgLoc, ConstEvalError> {
         let offset = if let Some(offset) = offset {
             self.interpret_offset(offset)?
         } else {
@@ -210,7 +217,7 @@ impl<'a> RValueToStgLocTranslator<'a> {
             RValue::LValue(LValue::Alias(name)) => Ok(StgLoc::Alias(name.clone())),
             RValue::LValue(LValue::Indirection { base, displacement }) => self
                 .interpret_indirection_base_offset(base, displacement.as_ref())
-                .map_err(RValueToStgLocError::ConstAliasUndefined),
+                .map_err(Into::into),
             RValue::Uint(_)
             | RValue::Int(_)
             | RValue::Char(_)

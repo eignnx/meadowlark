@@ -40,21 +40,42 @@ impl BinOp {
     }
 }
 
+pub enum ConstEvalError {
+    UndefinedAlias(String),
+    MaxEvalDepthExceeded,
+}
+
 impl ConstValue {
+    pub(crate) const MAX_EVALUATION_DEPTH: usize = 64;
+
     /// Returns `None` if the const alias is undefined.
-    pub fn evaluate(&self, aliases: &BTreeMap<String, ConstValue>) -> Option<i32> {
+    pub fn evaluate(&self, aliases: &BTreeMap<String, ConstValue>) -> Result<i32, ConstEvalError> {
+        self.evaluate_rec(aliases, 0)
+    }
+
+    fn evaluate_rec(
+        &self,
+        aliases: &BTreeMap<String, ConstValue>,
+        depth: usize,
+    ) -> Result<i32, ConstEvalError> {
+        if depth > ConstValue::MAX_EVALUATION_DEPTH {
+            return Err(ConstEvalError::MaxEvalDepthExceeded);
+        }
+
         match self {
-            ConstValue::Uint(u) => Some(*u as i32),
-            ConstValue::Int(i) => Some(*i as i32),
-            ConstValue::Char(c) => Some(*c as i32),
+            ConstValue::Uint(u) => Ok(*u as i32),
+            ConstValue::Int(i) => Ok(*i as i32),
+            ConstValue::Char(c) => Ok(*c as i32),
             ConstValue::ConstAlias(alias) => {
-                let value = aliases.get(alias)?;
-                value.evaluate(aliases)
+                let value = aliases
+                    .get(alias)
+                    .ok_or_else(|| ConstEvalError::UndefinedAlias(alias.to_owned()))?;
+                value.evaluate_rec(aliases, depth + 1)
             }
             ConstValue::BinOp(lhs, op, rhs) => {
-                let lhs = lhs.evaluate(aliases)?;
-                let rhs = rhs.evaluate(aliases)?;
-                Some(op.eval(lhs, rhs))
+                let lhs = lhs.evaluate_rec(aliases, depth + 1)?;
+                let rhs = rhs.evaluate_rec(aliases, depth + 1)?;
+                Ok(op.eval(lhs, rhs))
             }
         }
     }

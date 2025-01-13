@@ -1,6 +1,11 @@
 use lark_vm::cpu::{instr::ops::*, regs::Reg};
 
-use super::{check_instr::CheckInstr, stg_loc::StgLoc};
+use crate::compile::CodeGen;
+
+use super::{
+    check_instr::{CheckInstr, ImmEvalError},
+    stg_loc::StgLoc,
+};
 
 /// - `defs` are storage locations that would be overwritten by the instruction `self`.
 /// - `uses` are storage locations that would need to be read from by the instruction `self`.
@@ -8,6 +13,7 @@ pub fn defs_and_uses(
     instr: &CheckInstr,
     defs: &mut impl Extend<StgLoc>,
     uses: &mut impl Extend<StgLoc>,
+    codegen: &CodeGen,
 ) {
     match instr {
         CheckInstr::O { opcode } => match opcode {
@@ -109,22 +115,49 @@ pub fn defs_and_uses(
                 let (rd, src_addr_reg) = (reg1, reg2);
                 defs.extend([rd.clone()]);
 
+                let imm10 = match imm10.try_to_i32(&codegen.consts) {
+                    Ok(i) => i,
+                    Err(ImmEvalError::LabelNotConvertableToInt) => {
+                        panic!("Unexpected label in immediate to load instruction: `{imm10}`")
+                    }
+                    Err(ImmEvalError::MaxEvalDepthExceeded) => {
+                        panic!("Max eval depth exceeded for immediate expression `{imm10}`")
+                    }
+                    Err(ImmEvalError::UnboundConstAlias(name)) => {
+                        panic!("Unbound const alias `{name}` in immediate expression `{imm10}`")
+                    }
+                };
+
                 match src_addr_reg.clone().try_into() {
                     Ok(Reg::Sp) => {
-                        uses.extend([src_addr_reg.uses(), StgLoc::Stack(*imm10)]);
+                        uses.extend([src_addr_reg.uses(), StgLoc::Stack(imm10)]);
                     }
                     Ok(Reg::Gp) => {
-                        uses.extend([src_addr_reg.uses(), StgLoc::Global(*imm10)]);
+                        uses.extend([src_addr_reg.uses(), StgLoc::Global(imm10)]);
                     }
                     _ => uses.extend([src_addr_reg.uses()]),
                 }
             }
             OpcodeRegRegImm::SW | OpcodeRegRegImm::SB => {
                 let (dest_addr_reg, rs) = (reg1, reg2);
+
+                let imm10 = match imm10.try_to_i32(&codegen.consts) {
+                    Ok(i) => i,
+                    Err(ImmEvalError::LabelNotConvertableToInt) => {
+                        panic!("Unexpected label in immediate to store instruction: `{imm10}`")
+                    }
+                    Err(ImmEvalError::MaxEvalDepthExceeded) => {
+                        panic!("Max eval depth exceeded for immediate expression `{imm10}`")
+                    }
+                    Err(ImmEvalError::UnboundConstAlias(name)) => {
+                        panic!("Unbound const alias `{name}` in immediate expression `{imm10}`")
+                    }
+                };
+
                 uses.extend([dest_addr_reg.uses(), rs.clone()]);
                 match dest_addr_reg.clone().try_into() {
-                    Ok(Reg::Sp) => defs.extend([StgLoc::Stack(*imm10)]),
-                    Ok(Reg::Gp) => defs.extend([StgLoc::Global(*imm10)]),
+                    Ok(Reg::Sp) => defs.extend([StgLoc::Stack(imm10)]),
+                    Ok(Reg::Gp) => defs.extend([StgLoc::Global(imm10)]),
                     _ => {} // Ought to add `UniqueMem{..}` here, but that adds clutter to interference graph with no benefit.
                 }
             }

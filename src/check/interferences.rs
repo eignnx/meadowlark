@@ -1,6 +1,8 @@
 use core::fmt;
 use std::collections::{BTreeSet, HashMap};
 
+use crate::compile::CodeGen;
+
 use super::{cfg::NodeId, check_instr::CheckInstr, defs_uses, stg_loc::StgLoc};
 
 #[derive(Default)]
@@ -24,6 +26,7 @@ impl Interferences {
     pub fn from_live_sets(
         instrs: &[CheckInstr],
         live_outs: HashMap<NodeId, BTreeSet<StgLoc>>,
+        codegen: &CodeGen,
     ) -> Self {
         let mut edges: HashMap<_, BTreeSet<StgLoc>> = HashMap::new();
 
@@ -33,7 +36,7 @@ impl Interferences {
         for (id, instr) in instrs.iter().enumerate() {
             defs_buf.clear();
             uses_buf.clear();
-            defs_uses::defs_and_uses(instr, &mut defs_buf, &mut uses_buf);
+            defs_uses::defs_and_uses(instr, &mut defs_buf, &mut uses_buf, codegen);
 
             for def in defs_buf.iter() {
                 for out in live_outs.get(&id).map(|set| set.iter()).unwrap_or_default() {

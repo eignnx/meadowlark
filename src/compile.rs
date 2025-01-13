@@ -16,7 +16,7 @@ use crate::{
     },
     check::{
         cfg::{Cfg, Link, NodeId},
-        check_instr::{CheckInstr, CheckInstrTranslator},
+        check_instr::{CheckInstr, CheckInstrTranslator, Imm},
         interferences::Interferences,
         stg_loc::StgLoc,
     },
@@ -28,8 +28,8 @@ pub struct CodeGen {
     emit_comments: bool,
     current_subr: Option<SubrInfo>,
     filename: Option<PathBuf>,
-    var_aliases: HashMap<Var, LValue>,
-    consts: BTreeMap<Var, ConstValue>,
+    pub(crate) var_aliases: HashMap<Var, LValue>,
+    pub(crate) consts: BTreeMap<Var, ConstValue>,
     string_literal_labels: HashMap<String, String>,
 }
 
@@ -307,10 +307,11 @@ impl CodeGen {
     }
 
     fn subr_cfg_check(&mut self) {
-        let cfg = self.current_cfg_mut();
+        let mut cfg = self.current_cfg_mut().clone();
         cfg.add_all_deferred_labels();
-        let (_live_ins, live_outs) = cfg.compute_live_ins_live_outs();
-        let intfs = Interferences::from_live_sets(cfg.stmts(), live_outs);
+        let stmts = cfg.stmts().to_vec();
+        let (_live_ins, live_outs) = cfg.compute_live_ins_live_outs(self);
+        let intfs = Interferences::from_live_sets(&stmts, live_outs, self);
 
         // Check all aliases:
         let alias_bindings = &self.var_aliases;
@@ -465,7 +466,7 @@ impl CodeGen {
                 opcode: OpcodeRegRegImm::SUBI,
                 reg1: Reg::Sp.into(),
                 reg2: Reg::Sp.into(),
-                imm10: (preserve_regs.len() * 2) as i32,
+                imm10: Imm::Uint(2 * preserve_regs.len() as u16),
             },
             [Link::ToNext],
         )?;
@@ -478,7 +479,7 @@ impl CodeGen {
                     opcode: OpcodeRegRegImm::SW,
                     reg1: Reg::Sp.into(),
                     reg2: (*reg).into(),
-                    imm10: (i * std::mem::size_of::<u16>()) as i32,
+                    imm10: Imm::Uint((i * std::mem::size_of::<u16>()) as u16),
                 },
                 [Link::ToNext],
             )?;
@@ -514,9 +515,6 @@ impl CodeGen {
         eprintln!("\tArgument register `{reg}` already assigned to argument `{prev_use}`.");
     }
 
-    #[allow(clippy::unusual_byte_groupings)]
-    const DUMMY_LABEL_OFFSET: i32 = 0x1ABE1_DED; // "Label, Dead"
-
     fn compile_stmt(&mut self, out: &mut dyn io::Write, stmt: &Stmt) -> io::Result<()> {
         match stmt {
             Stmt::Label(name) => self.emit_label(out, name.to_owned())?,
@@ -542,7 +540,7 @@ impl CodeGen {
                                 opcode: OpcodeRegRegImm::LW,
                                 reg1: (*reg).into(),
                                 reg2: Reg::Sp.into(),
-                                imm10: offset as i32,
+                                imm10: Imm::Int(offset as i16),
                             },
                             [Link::ToNext],
                         )?;
@@ -554,7 +552,7 @@ impl CodeGen {
                             opcode: OpcodeRegRegImm::ADDI,
                             reg1: Reg::Sp.into(),
                             reg2: Reg::Sp.into(),
-                            imm10: (regs_to_restore.len() * 2) as i32,
+                            imm10: Imm::Uint(2 * regs_to_restore.len() as u16),
                         },
                         [Link::ToNext],
                     )?;
@@ -609,7 +607,7 @@ impl CodeGen {
                         opcode: OpcodeRegRegImm::SUBI,
                         reg1: Reg::Sp.into(),
                         reg2: Reg::Sp.into(),
-                        imm10: (regs.len() * 2) as i32,
+                        imm10: Imm::Uint(2 * regs.len() as u16),
                     },
                     [Link::ToNext],
                 )?;
@@ -631,12 +629,12 @@ impl CodeGen {
                                 opcode: OpcodeRegRegImm::SW,
                                 reg1: Reg::Sp.into(),
                                 reg2: (*reg).into(),
-                                imm10: offset as i32,
+                                imm10: Imm::Int(offset as i16),
                             },
                             [Link::ToNext],
                         )?;
                     } else {
-                        let offset = (i * std::mem::size_of::<u16>()) as i32;
+                        let offset = (i * std::mem::size_of::<u16>()) as i16;
                         // writeln!(out, "\tsw\t{offset}($sp), {reg}")?;
                         self.emit_instr(
                             out,
@@ -644,7 +642,7 @@ impl CodeGen {
                                 opcode: OpcodeRegRegImm::SW,
                                 reg1: Reg::Sp.into(),
                                 reg2: (*reg).into(),
-                                imm10: offset,
+                                imm10: Imm::Int(offset),
                             },
                             [Link::ToNext],
                         )?;
@@ -695,7 +693,7 @@ impl CodeGen {
                     CheckInstr::RI {
                         opcode: OpcodeRegImm::BF,
                         reg: (*test_reg_resolved).into(),
-                        imm: Self::DUMMY_LABEL_OFFSET,
+                        imm: Imm::Label(if_else.clone()),
                     },
                     [Link::JumpToLabel(Cow::Borrowed(&if_else)), Link::ToNext],
                 )?;
@@ -710,7 +708,7 @@ impl CodeGen {
                 self.emit_instr_no_write(
                     CheckInstr::A {
                         opcode: OpcodeAddr::J,
-                        offset: Self::DUMMY_LABEL_OFFSET,
+                        offset: Imm::Label(if_end.clone()),
                     },
                     [Link::JumpToLabel(Cow::Borrowed(&if_end)), Link::ToNext],
                 )?;
@@ -746,7 +744,7 @@ impl CodeGen {
                 self.emit_instr_no_write(
                     CheckInstr::A {
                         opcode: OpcodeAddr::J,
-                        offset: Self::DUMMY_LABEL_OFFSET,
+                        offset: Imm::Label(loop_cond.clone()),
                     },
                     [Link::JumpToLabel(Cow::Borrowed(&loop_cond)), Link::ToNext],
                 )?;
@@ -790,7 +788,7 @@ impl CodeGen {
                     CheckInstr::RI {
                         opcode: OpcodeRegImm::BT,
                         reg: (*test_arg_resolved).into(),
-                        imm: Self::DUMMY_LABEL_OFFSET,
+                        imm: Imm::Label(loop_top.clone()),
                     },
                     [Link::JumpToLabel(Cow::Borrowed(&loop_top)), Link::ToNext],
                 )?;
@@ -810,7 +808,7 @@ impl CodeGen {
                 self.emit_instr_no_write(
                     CheckInstr::A {
                         opcode: OpcodeAddr::J,
-                        offset: Self::DUMMY_LABEL_OFFSET,
+                        offset: Imm::Label(loop_top.clone()),
                     },
                     [Link::JumpToLabel(loop_top.into()), Link::ToNext],
                 )?;
@@ -863,11 +861,7 @@ impl CodeGen {
 
     fn compile_instr(&mut self, out: &mut dyn io::Write, instr: &Instr) -> io::Result<()> {
         let mut links = vec![];
-        match CheckInstrTranslator::new(&self.consts).translate(
-            &instr.op,
-            &instr.args[..],
-            &mut links,
-        ) {
+        match CheckInstrTranslator::new(self).translate(&instr.op, &instr.args[..], &mut links) {
             Ok(check_instr) => {
                 self.emit_instr_no_write(check_instr, links)?;
             }
@@ -998,7 +992,7 @@ impl CodeGen {
         }
     }
 
-    fn get_or_insert_string_literal<'a>(&'a mut self, s: &str) -> &'a str {
+    pub(crate) fn get_or_insert_string_literal<'a>(&'a mut self, s: &str) -> &'a str {
         let preview = s
             .chars()
             .take(8)

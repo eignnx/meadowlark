@@ -144,7 +144,7 @@ isr handle_KEY_EVENT() {
     !li     buffer, KEY_BUFFER_ADDR;
 
     # byte* write_ptr = buffer + (byte*) write_ptr_idx
-    alias   write_ptr => $s0;
+    alias   write_ptr => $t0; # $s0;
     !addu   write_ptr, buffer, write_ptr_idx;
 
     # write_ptr.* = key_code;

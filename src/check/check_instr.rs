@@ -1,16 +1,110 @@
 use core::fmt;
 use std::{collections::BTreeMap, str::FromStr};
 
-use lark_vm::cpu::instr::{self, ops::*};
+use lark_vm::cpu::{
+    instr::{self, ops::*},
+    regs::Reg,
+};
 
-use crate::ast::{const_val::ConstValue, lvalue::LValue, rvalue::RValue};
+use crate::{
+    ast::{
+        const_val::{ConstEvalError, ConstValue},
+        lvalue::LValue,
+        rvalue::RValue,
+    },
+    compile::CodeGen,
+};
 
 use super::{
     cfg::Link,
     stg_loc::{RValueToStgLocError, RValueToStgLocTranslator, StgLoc},
 };
 
-pub type CheckInstr = instr::Instr<StgLoc, i32>;
+pub enum ImmEvalError {
+    UnboundConstAlias(String),
+    MaxEvalDepthExceeded,
+    LabelNotConvertableToInt,
+}
+
+impl From<ConstEvalError> for ImmEvalError {
+    fn from(value: ConstEvalError) -> Self {
+        match value {
+            ConstEvalError::UndefinedAlias(name) => Self::UnboundConstAlias(name),
+            ConstEvalError::MaxEvalDepthExceeded => Self::MaxEvalDepthExceeded,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd, Ord, Eq, Hash)]
+pub enum Imm {
+    Uint(u16),
+    Int(i16),
+    Char(u8),
+    ConstAlias(String),
+    Label(String),
+}
+
+impl Imm {
+    pub fn try_from_rvalue(
+        codegen: &mut CodeGen,
+        current_opcode: &str,
+        rvalue: &RValue,
+    ) -> Result<Imm, InstrTranslationErr> {
+        match rvalue {
+            RValue::Uint(u) => Ok(Imm::Uint(*u)),
+            RValue::Int(i) => Ok(Imm::Int(*i)),
+            RValue::Char(c) => Ok(Imm::Char(*c)),
+            RValue::ConstAlias(name) => Ok(Imm::ConstAlias(name.clone())),
+            RValue::Label(lbl) => Ok(Imm::Label(lbl.clone())),
+            RValue::String(s) => {
+                let label = codegen.get_or_insert_string_literal(s);
+                Ok(Imm::Label(label.to_owned()))
+            }
+            RValue::LValue(lval) => Err(InstrTranslationErr::WrongArgType {
+                opcode: current_opcode.to_owned(),
+                expected: "rvalue convertable to immediate value",
+                got: format!("lvalue `{lval}`"),
+            }),
+        }
+    }
+
+    pub fn try_to_i32(&self, consts: &BTreeMap<String, ConstValue>) -> Result<i32, ImmEvalError> {
+        match self {
+            Imm::Uint(u) => Ok(*u as i32),
+            Imm::Int(i) => Ok(*i as i32),
+            Imm::Char(byte) => Ok(*byte as i32),
+            Imm::ConstAlias(name) => match consts
+                .get(name)
+                .ok_or_else(|| ConstEvalError::UndefinedAlias(name.clone()))?
+            {
+                ConstValue::Uint(u) => Ok(*u as i32),
+                ConstValue::Int(i) => Ok(*i as i32),
+                ConstValue::Char(c) => Ok(*c as i32),
+                value @ ConstValue::ConstAlias(..) => value.evaluate(consts).map_err(Into::into),
+                ConstValue::BinOp(lhs, op, rhs) => {
+                    let lhs = lhs.evaluate(consts)?;
+                    let rhs = rhs.evaluate(consts)?;
+                    Ok(op.eval(lhs, rhs))
+                }
+            },
+            Imm::Label(_) => todo!(),
+        }
+    }
+}
+
+impl fmt::Display for Imm {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Imm::Uint(u) => write!(f, "{u}"),
+            Imm::Int(i) => write!(f, "{i}"),
+            Imm::Char(c) => write!(f, "{:?}", *c as char),
+            Imm::ConstAlias(name) => write!(f, "{name}"),
+            Imm::Label(lbl) => write!(f, "&{lbl}"),
+        }
+    }
+}
+
+pub type CheckInstr = instr::Instr<StgLoc, Imm>;
 
 pub enum InstrTranslationErr {
     WrongArgCount {
@@ -29,6 +123,13 @@ pub enum InstrTranslationErr {
     UnboundConstAlias {
         opcode: String,
         name: String,
+    },
+    UnboundAlias {
+        opcode: String,
+        name: String,
+    },
+    MaxConstEvalDepthExceeded {
+        opcode: String,
     },
 }
 
@@ -58,6 +159,12 @@ impl fmt::Display for InstrTranslationErr {
             InstrTranslationErr::UnboundConstAlias { opcode, name } => {
                 write!(f, "unbound const alias `{name}` in instr `{opcode}`")
             }
+            InstrTranslationErr::UnboundAlias { opcode, name } => {
+                write!(f, "unbound alias `{name}` in instr `{opcode}`")
+            }
+            InstrTranslationErr::MaxConstEvalDepthExceeded { opcode } => {
+                write!(f, "max const eval depth exceeded in instr `{opcode}`")
+            }
         }
     }
 }
@@ -73,56 +180,77 @@ impl InstrTranslationErr {
             }
             RValueToStgLocError::NonStgLocRValue(rv) => InstrTranslationErr::WrongArgType {
                 opcode: op_name.into(),
-                expected: "register",
+                expected: "rvalue representing a register",
                 got: rv.to_string(),
             },
+            RValueToStgLocError::MaxEvalDepthExceeded => {
+                InstrTranslationErr::MaxConstEvalDepthExceeded {
+                    opcode: op_name.into(),
+                }
+            }
         }
     }
 }
 
 pub struct CheckInstrTranslator<'a> {
-    consts: &'a BTreeMap<String, ConstValue>,
+    codegen: &'a mut CodeGen,
 }
 
-impl CheckInstrTranslator<'_> {
-    pub fn new(consts: &BTreeMap<String, ConstValue>) -> CheckInstrTranslator<'_> {
-        CheckInstrTranslator { consts }
+impl<'a> CheckInstrTranslator<'a> {
+    pub fn new(codegen: &'a mut CodeGen) -> CheckInstrTranslator<'a> {
+        CheckInstrTranslator { codegen }
     }
 
-    fn try_rvalue_as_i32(
+    fn try_rvalue_as_reg(
         &self,
         current_opcode: &str,
         rv: &RValue,
-    ) -> Result<i32, InstrTranslationErr> {
+    ) -> Result<Reg, InstrTranslationErr> {
         match rv {
-            RValue::ConstAlias(name) => {
-                if let Some(constexpr) = self.consts.get(name) {
-                    constexpr.evaluate(self.consts).ok_or_else(|| {
-                        InstrTranslationErr::UnboundConstAlias {
-                            opcode: current_opcode.into(),
-                            name: name.clone(),
-                        }
-                    })
-                } else {
-                    Err(InstrTranslationErr::UnboundConstAlias {
-                        opcode: current_opcode.into(),
-                        name: name.clone(),
-                    })
+            RValue::LValue(LValue::Reg(reg)) => Ok(*reg),
+            RValue::LValue(LValue::Alias(name)) => match self.codegen.var_aliases.get(name) {
+                Some(LValue::Reg(reg)) => Ok(*reg),
+                Some(LValue::Alias(name)) => {
+                    todo!("aliases to aliases are not yet supported. `{name}`")
                 }
-            }
-            RValue::Int(i) => Ok(*i as i32),
-            RValue::Uint(u) => Ok(*u as i32),
-            RValue::Label(_) => Ok(0x00CAFE00),
+                Some(other) => Err(InstrTranslationErr::WrongArgType {
+                    opcode: current_opcode.into(),
+                    expected: "register",
+                    got: other.to_string(),
+                }),
+                None => Err(InstrTranslationErr::UnboundAlias {
+                    opcode: current_opcode.into(),
+                    name: name.to_owned(),
+                }),
+            },
             _ => Err(InstrTranslationErr::WrongArgType {
                 opcode: current_opcode.into(),
-                expected: "constant",
+                expected: "register",
                 got: rv.to_string(),
             }),
         }
     }
 
-    pub fn translate(
+    fn try_rvalue_as_imm(
+        &mut self,
+        current_opcode: &str,
+        rv: &RValue,
+    ) -> Result<Imm, InstrTranslationErr> {
+        Imm::try_from_rvalue(self.codegen, current_opcode, rv)
+    }
+
+    fn try_rvalue_to_stg_loc(
         &self,
+        current_opcode: &str,
+        rv: &RValue,
+    ) -> Result<StgLoc, InstrTranslationErr> {
+        RValueToStgLocTranslator::new(&self.codegen.consts)
+            .translate(rv)
+            .map_err(|e| InstrTranslationErr::from_rvalue_err(current_opcode, e))
+    }
+
+    pub fn translate(
+        &mut self,
         op_name: &str,
         args: &[RValue],
         links: &mut impl Extend<Link<'static>>,
@@ -145,7 +273,7 @@ impl CheckInstrTranslator<'_> {
             opcode.links(links, args);
             match args {
                 [offset] => {
-                    let offset = self.try_rvalue_as_i32(op_name, offset)?;
+                    let offset = self.try_rvalue_as_imm(op_name, offset)?;
                     return Ok(CheckInstr::A { opcode, offset });
                 }
                 _ => {
@@ -162,9 +290,7 @@ impl CheckInstrTranslator<'_> {
             opcode.links(links, args);
             match args {
                 [reg] => {
-                    let reg = RValueToStgLocTranslator::new(self.consts)
-                        .translate(reg)
-                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
+                    let reg = self.try_rvalue_to_stg_loc(op_name, reg)?;
                     return Ok(CheckInstr::R { opcode, reg });
                 }
                 _ => {
@@ -181,14 +307,8 @@ impl CheckInstrTranslator<'_> {
             opcode.links(links, args);
             match args {
                 [imm] => {
-                    let imm = self.try_rvalue_as_i32(op_name, imm)?;
-                    if !(-512..1024).contains(&imm) {
-                        return Err(InstrTranslationErr::WrongArgType {
-                            opcode: op_name.into(),
-                            expected: "10-bit integer",
-                            got: imm.to_string(),
-                        });
-                    }
+                    let imm = self.try_rvalue_as_imm(op_name, imm)?;
+                    // TODO: Check that imm is 10 bit int.
                     return Ok(CheckInstr::I { opcode, imm10: imm });
                 }
                 _ => {
@@ -204,11 +324,9 @@ impl CheckInstrTranslator<'_> {
         if let Ok(opcode) = OpcodeRegImm::from_str(op_name) {
             opcode.links(links, args);
             match args {
-                [reg, _imm] => {
-                    let reg = RValueToStgLocTranslator::new(self.consts)
-                        .translate(reg)
-                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
-                    let imm = 0x00FACADE; //self.try_rvalue_as_i32(op_name, imm)?;
+                [reg, imm] => {
+                    let reg = self.try_rvalue_to_stg_loc(op_name, reg)?;
+                    let imm = self.try_rvalue_as_imm(op_name, imm)?;
                     return Ok(CheckInstr::RI { opcode, reg, imm });
                 }
                 _ => {
@@ -225,12 +343,8 @@ impl CheckInstrTranslator<'_> {
             opcode.links(links, args);
             match args {
                 [reg1, reg2] => {
-                    let reg1 = RValueToStgLocTranslator::new(self.consts)
-                        .translate(reg1)
-                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
-                    let reg2 = RValueToStgLocTranslator::new(self.consts)
-                        .translate(reg2)
-                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
+                    let reg1 = self.try_rvalue_to_stg_loc(op_name, reg1)?;
+                    let reg2 = self.try_rvalue_to_stg_loc(op_name, reg2)?;
                     return Ok(CheckInstr::RR { opcode, reg1, reg2 });
                 }
                 _ => {
@@ -247,22 +361,16 @@ impl CheckInstrTranslator<'_> {
             opcode.links(links, args);
             match args {
                 [reg1, reg2, imm] => {
-                    let reg1 = RValueToStgLocTranslator::new(self.consts)
+                    let reg1 = RValueToStgLocTranslator::new(&self.codegen.consts)
                         .translate(reg1)
                         .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
 
-                    let reg2 = RValueToStgLocTranslator::new(self.consts)
+                    let reg2 = RValueToStgLocTranslator::new(&self.codegen.consts)
                         .translate(reg2)
                         .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
 
-                    let imm = self.try_rvalue_as_i32(op_name, imm)?;
-                    if !(-512..1024).contains(&imm) {
-                        return Err(InstrTranslationErr::WrongArgType {
-                            opcode: op_name.into(),
-                            expected: "10-bit integer",
-                            got: imm.to_string(),
-                        });
-                    }
+                    let imm = self.try_rvalue_as_imm(op_name, imm)?;
+                    // TODO: Check that imm is 10 bit int.
 
                     return Ok(CheckInstr::RRI {
                         opcode,
@@ -277,19 +385,14 @@ impl CheckInstrTranslator<'_> {
                 [ind @ RValue::LValue(LValue::Indirection { .. }), src_reg]
                     if matches!(opcode, OpcodeRegRegImm::SW | OpcodeRegRegImm::SB) =>
                 {
-                    let tr = RValueToStgLocTranslator::new(self.consts);
-                    let ind = tr
-                        .translate(ind)
-                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
-                    let src_reg = tr
-                        .translate(src_reg)
-                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
+                    let ind = self.try_rvalue_to_stg_loc(op_name, ind)?;
+                    let src_reg = self.try_rvalue_to_stg_loc(op_name, src_reg)?;
 
                     return Ok(CheckInstr::RRI {
                         opcode,
                         reg1: ind,
                         reg2: src_reg,
-                        imm10: 0,
+                        imm10: Imm::Uint(0), // displacement
                     });
                 }
 
@@ -301,21 +404,14 @@ impl CheckInstrTranslator<'_> {
                         OpcodeRegRegImm::LW | OpcodeRegRegImm::LBS | OpcodeRegRegImm::LBU
                     ) =>
                 {
-                    let tr = RValueToStgLocTranslator::new(self.consts);
-                    let dst_reg = tr
-                        .translate(dst_reg)
-                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
-                    let ind = tr
-                        .translate(ind)
-                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
-
-                    dbg!((op_name, &dst_reg, &ind));
+                    let dst_reg = self.try_rvalue_to_stg_loc(op_name, dst_reg)?;
+                    let ind = self.try_rvalue_to_stg_loc(op_name, ind)?;
 
                     return Ok(CheckInstr::RRI {
                         opcode,
                         reg1: dst_reg,
                         reg2: ind,
-                        imm10: 0,
+                        imm10: Imm::Uint(0), // displacement
                     });
                 }
 
@@ -333,23 +429,11 @@ impl CheckInstrTranslator<'_> {
             opcode.links(links, args);
             match args {
                 [reg1, reg2, reg3] => {
-                    let reg1 = RValueToStgLocTranslator::new(self.consts)
-                        .translate(reg1)
-                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
-
-                    let reg2 = RValueToStgLocTranslator::new(self.consts)
-                        .translate(reg2)
-                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
-
-                    let reg3 = RValueToStgLocTranslator::new(self.consts)
-                        .translate(reg3)
-                        .map_err(|e| InstrTranslationErr::from_rvalue_err(op_name, e))?;
-
                     return Ok(CheckInstr::RRR {
                         opcode,
-                        reg1,
-                        reg2,
-                        reg3,
+                        reg1: self.try_rvalue_to_stg_loc(op_name, reg1)?,
+                        reg2: self.try_rvalue_to_stg_loc(op_name, reg2)?,
+                        reg3: self.try_rvalue_to_stg_loc(op_name, reg3)?,
                     });
                 }
                 _ => {
