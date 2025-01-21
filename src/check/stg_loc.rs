@@ -137,6 +137,8 @@ impl TryFrom<StgLoc> for Reg {
 pub struct RValueToStgLocTranslator<'a> {
     consts: &'a BTreeMap<String, ConstValue>,
 }
+
+#[derive(Debug)]
 pub enum RValueToStgLocError {
     ConstAliasUndefined(String),
     NonStgLocRValue(RValue),

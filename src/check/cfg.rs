@@ -5,7 +5,7 @@ use std::{
 
 use lark_vm::cpu::regs::Reg;
 
-use crate::compile::CodeGen;
+use crate::{compile::CodeGen, debug_flags};
 
 use super::{check_instr::CheckInstr, defs_uses, stg_loc::StgLoc};
 
@@ -81,10 +81,13 @@ impl Cfg {
         }
     }
 
-    pub fn add_all_deferred_labels(&mut self) {
+    pub fn add_all_deferred_labels(&mut self, codegen: &CodeGen) {
         for (id, label) in self.label_links.drain(..) {
             if let Some(target_id) = self.labels.get(&label) {
                 self.edges.insert((id, *target_id));
+            } else if codegen.subr_name_is_defined(&label) {
+                // Tail call to another subroutine.
+                self.exits.insert(id);
             } else {
                 eprintln!("Warning: Label `{label}` is undefined.");
             }
@@ -180,11 +183,14 @@ impl Cfg {
     ) -> NodeId {
         let id = self.stmts.len();
 
-        self.stmts.push(instr);
+        self.stmts.push(instr.clone());
 
         if self.link_from_prev {
             self.edges.insert((id - 1, id));
             self.link_from_prev = false;
+            if debug_flags::PRINT_CFG_EDGE_INSERTIONS {
+                eprintln!("CFG: Inserted edge: ({} -> {})\t\t{instr} ", id - 1, id);
+            }
         }
 
         for link in links.into_iter() {
@@ -194,9 +200,15 @@ impl Cfg {
                 }
                 Link::JumpToNodeId(target) => {
                     self.edges.insert((id, target));
+                    if debug_flags::PRINT_CFG_EDGE_INSERTIONS {
+                        eprintln!("CFG: Inserted edge: ({} -> {})\t\t{instr}", id, target);
+                    }
                 }
                 Link::JumpToLabel(label) => {
-                    self.label_links.push((id, label.into()));
+                    self.label_links.push((id, label.clone().into()));
+                    if debug_flags::PRINT_CFG_EDGE_INSERTIONS {
+                        eprintln!("CFG: Inserted edge: ({} -> {})\t\t{instr}", id, label);
+                    }
                 }
             }
         }

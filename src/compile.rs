@@ -18,7 +18,7 @@ use crate::{
         cfg::{Cfg, Link, NodeId},
         check_instr::{CheckInstr, CheckInstrTranslator, Imm},
         interferences::Interferences,
-        stg_loc::StgLoc,
+        stg_loc::{RValueToStgLocTranslator, StgLoc},
     },
     debug_flags,
 };
@@ -31,6 +31,7 @@ pub struct CodeGen {
     pub(crate) var_aliases: HashMap<Var, LValue>,
     pub(crate) consts: BTreeMap<Var, ConstValue>,
     string_literal_labels: HashMap<String, String>,
+    all_subr_names: BTreeSet<String>,
 }
 
 impl CodeGen {
@@ -43,6 +44,7 @@ impl CodeGen {
             var_aliases: HashMap::new(),
             consts: BTreeMap::new(),
             string_literal_labels: HashMap::new(),
+            all_subr_names: BTreeSet::new(),
         }
     }
 
@@ -55,7 +57,7 @@ impl CodeGen {
     }
 
     #[inline]
-    fn current_subr_name(&self) -> &str {
+    pub(crate) fn current_subr_name(&self) -> &str {
         self.current_subr
             .as_ref()
             .map(|f| f.subr_name.as_str())
@@ -129,6 +131,13 @@ impl CodeGen {
         }
 
         writeln!(out)?;
+
+        // Make sure all subr names are known before we start compiling.
+        for item in &non_consts {
+            if let Item::SubrDef { name, .. } = item {
+                self.all_subr_names.insert(name.clone());
+            }
+        }
 
         for item in &non_consts {
             self.compile_item(out, item)?;
@@ -250,6 +259,13 @@ impl CodeGen {
             cfg: Cfg::new(vec![]),
         });
 
+        if debug_flags::PRINT_CFG_EDGE_INSERTIONS {
+            eprintln!(
+                "\nCFG: ==== Computing live ins and outs for `{}` ====",
+                subr_name
+            );
+        }
+
         self.comment(
             out,
             format!(
@@ -308,7 +324,7 @@ impl CodeGen {
 
     fn subr_cfg_check(&mut self) {
         let mut cfg = self.current_cfg_mut().clone();
-        cfg.add_all_deferred_labels();
+        cfg.add_all_deferred_labels(self);
         let stmts = cfg.stmts().to_vec();
         let (_live_ins, live_outs) = cfg.compute_live_ins_live_outs(self);
         let intfs = Interferences::from_live_sets(&stmts, live_outs, self);
@@ -349,6 +365,20 @@ impl CodeGen {
                         self.current_subr_name()
                     );
                     eprintln!("\tAlias `{alias}` is bound to register `{reg}`, but `{reg}` is used on it's own while `{alias}` is in use.");
+
+                    let alt_regs = Reg::GENERAL_PURPOSE
+                        .iter()
+                        .filter(|r| **r != reg)
+                        .filter(|r| !intfs.interferes_with(&reg.into(), &StgLoc::Reg(**r)))
+                        .map(|r| format!("`{r}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
+                    eprintln!(
+                        "\tThe following registers do not conflict with `{alias}` or `{reg}`:"
+                    );
+                    eprintln!("\t\t{alt_regs}");
+                    eprintln!();
 
                     if debug_flags::PRINT_INTERFERENCE_GRAPH {
                         eprintln!("{intfs}");
@@ -688,11 +718,15 @@ impl CodeGen {
                     _ => panic!("Test argument of `if` statement is not a register."),
                 };
 
+                let test_reg = RValueToStgLocTranslator::new(&self.consts)
+                    .translate(test_reg)
+                    .unwrap();
+
                 writeln!(out, "\tbf\t{test_reg_resolved}, {if_else}")?;
                 self.emit_instr_no_write(
                     CheckInstr::RI {
                         opcode: OpcodeRegImm::BF,
-                        reg: (*test_reg_resolved).into(),
+                        reg: test_reg,
                         imm: Imm::Label(if_else.clone()),
                     },
                     [Link::JumpToLabel(Cow::Borrowed(&if_else)), Link::ToNext],
@@ -784,10 +818,15 @@ impl CodeGen {
                     _ => panic!("Test argument of `while` loop is not a register."),
                 };
                 writeln!(out, "\tbt\t{test_arg_resolved}, {loop_top}")?;
+
+                let test_arg = RValueToStgLocTranslator::new(&self.consts)
+                    .translate(test_arg)
+                    .unwrap();
+
                 self.emit_instr_no_write(
                     CheckInstr::RI {
                         opcode: OpcodeRegImm::BT,
-                        reg: (*test_arg_resolved).into(),
+                        reg: test_arg,
                         imm: Imm::Label(loop_top.clone()),
                     },
                     [Link::JumpToLabel(Cow::Borrowed(&loop_top)), Link::ToNext],
@@ -1004,6 +1043,10 @@ impl CodeGen {
         self.string_literal_labels
             .entry(s.to_string())
             .or_insert_with(|| self.label_indexes.fresh(&label_prefix))
+    }
+
+    pub(crate) fn subr_name_is_defined(&self, label: &str) -> bool {
+        self.all_subr_names.contains(label)
     }
 }
 
