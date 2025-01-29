@@ -201,6 +201,7 @@ impl<'a> CheckInstrTranslator<'a> {
         CheckInstrTranslator { codegen }
     }
 
+    #[expect(unused)]
     fn try_rvalue_as_reg(
         &self,
         current_opcode: &str,
