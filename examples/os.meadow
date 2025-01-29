@@ -69,12 +69,13 @@ subr main() {
         if cond (
             !tne    cond, read_ptr.idx, write_ptr.idx;
         ) do {
-            # byte key_code = (buffer_ptr + read_ptr.idx).*;
             alias   buffer_ptr => $t1;
-            !li     buffer_ptr, KEY_BUFFER_ADDR;
             alias   read_ptr => { addr => $s1; };
-            !addu   read_ptr.addr, buffer_ptr, read_ptr.idx;
             alias   key_code => $a0;
+
+            # byte key_code = (buffer_ptr + read_ptr.idx).*;
+            !li     buffer_ptr, KEY_BUFFER_ADDR;
+            !addu   read_ptr.addr, buffer_ptr, read_ptr.idx;
             !lbu    key_code, [read_ptr.addr];
 
             # read_ptr.idx++;
@@ -94,11 +95,12 @@ subr vtty_putc(key_code) {
     !li     vtty_buf_len_addr, VTTY_BUF_LEN_ADDR;
 
     !lw     vtty_len, [vtty_buf_len_addr];
-    !addi   vtty_len, vtty_len, VTTY_BASE;
+    alias   vtty_next_char => $t1;
+    !addi   vtty_next_char, vtty_len, VTTY_BASE;
+    
+    !sb     [vtty_next_char], key_code;
 
-    !sb     [vtty_len], key_code;
-
-    !subi   vtty_len, vtty_len, VTTY_BASE;
+    !subi   vtty_len, vtty_next_char, VTTY_BASE;
     !addi   vtty_len, vtty_len, 1;
     !sw     [vtty_buf_len_addr], vtty_len;
 
