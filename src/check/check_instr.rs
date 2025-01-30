@@ -7,11 +7,7 @@ use lark_vm::cpu::{
 };
 
 use crate::{
-    ast::{
-        const_val::{ConstEvalError, ConstValue},
-        lvalue::LValue,
-        rvalue::RValue,
-    },
+    ast::{const_val::ConstEvalError, lvalue::LValue, rvalue::RValue},
     compile::CodeGen,
 };
 
@@ -68,25 +64,15 @@ impl Imm {
         }
     }
 
-    pub fn try_to_i32(&self, consts: &BTreeMap<String, ConstValue>) -> Result<i32, ImmEvalError> {
+    pub fn try_to_i32(&self, consts: &BTreeMap<String, i32>) -> Result<i32, ImmEvalError> {
         match self {
             Imm::Uint(u) => Ok(*u as i32),
             Imm::Int(i) => Ok(*i as i32),
             Imm::Char(byte) => Ok(*byte as i32),
-            Imm::ConstAlias(name) => match consts
+            Imm::ConstAlias(name) => consts
                 .get(name)
-                .ok_or_else(|| ConstEvalError::UndefinedAlias(name.clone()))?
-            {
-                ConstValue::Uint(u) => Ok(*u as i32),
-                ConstValue::Int(i) => Ok(*i as i32),
-                ConstValue::Char(c) => Ok(*c as i32),
-                value @ ConstValue::ConstAlias(..) => value.evaluate(consts).map_err(Into::into),
-                ConstValue::BinOp(lhs, op, rhs) => {
-                    let lhs = lhs.evaluate(consts)?;
-                    let rhs = rhs.evaluate(consts)?;
-                    Ok(op.eval(lhs, rhs))
-                }
-            },
+                .cloned()
+                .ok_or_else(|| ImmEvalError::UnboundConstAlias(name.clone())),
             Imm::Label(_) => todo!(),
         }
     }

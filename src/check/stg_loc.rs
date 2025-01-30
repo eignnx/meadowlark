@@ -8,7 +8,7 @@ use std::{
 use lark_vm::cpu::regs::Reg;
 
 use crate::ast::{
-    const_val::{ConstEvalError, ConstValue},
+    const_val::ConstEvalError,
     lvalue::{Base, Displacement, LValue},
     rvalue::RValue,
 };
@@ -135,7 +135,7 @@ impl TryFrom<StgLoc> for Reg {
 }
 
 pub struct RValueToStgLocTranslator<'a> {
-    consts: &'a BTreeMap<String, ConstValue>,
+    consts: &'a BTreeMap<String, i32>,
 }
 
 #[derive(Debug)]
@@ -155,7 +155,7 @@ impl From<ConstEvalError> for RValueToStgLocError {
 }
 
 impl<'a> RValueToStgLocTranslator<'a> {
-    pub fn new(consts: &'a BTreeMap<String, ConstValue>) -> Self {
+    pub fn new(consts: &'a BTreeMap<String, i32>) -> Self {
         Self { consts }
     }
 
@@ -164,11 +164,11 @@ impl<'a> RValueToStgLocTranslator<'a> {
         match offset {
             Displacement::I10(i) => Ok(*i as i32),
             Displacement::Const(name) => match self.consts.get(name) {
-                Some(x) => x.evaluate(self.consts),
+                Some(&x) => Ok(x),
                 None => Err(ConstEvalError::UndefinedAlias(name.clone())),
             },
             Displacement::NegatedConst(name) => match self.consts.get(name) {
-                Some(x) => x.evaluate(self.consts).map(|x| -x),
+                Some(&x) => Ok(-x),
                 None => Err(ConstEvalError::UndefinedAlias(name.clone())),
             },
         }

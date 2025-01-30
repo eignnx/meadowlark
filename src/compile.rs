@@ -29,7 +29,7 @@ pub struct CodeGen {
     current_subr: Option<SubrInfo>,
     filename: Option<PathBuf>,
     pub(crate) var_aliases: HashMap<Var, LValue>,
-    pub(crate) consts: BTreeMap<Var, ConstValue>,
+    pub(crate) consts: BTreeMap<Var, i32>,
     string_literal_labels: HashMap<String, String>,
     all_subr_names: BTreeSet<String>,
 }
@@ -121,13 +121,16 @@ impl CodeGen {
             })
             .collect::<Vec<_>>();
 
-        for (name, value) in &consts {
-            self.consts.insert(name.clone(), value.clone());
-        }
+        let mut formulae = BTreeMap::new();
 
         for (name, value) in &consts {
-            let evaluated = self.eval_const_value(value, 0);
+            formulae.insert(name.clone(), value.clone());
+        }
+
+        for (name, value) in consts {
+            let evaluated = self.eval_const_value(&value, &formulae, 0);
             writeln!(out, "#const {name} = {evaluated}")?;
+            self.consts.insert(name, evaluated);
         }
 
         writeln!(out)?;
@@ -214,7 +217,12 @@ impl CodeGen {
 
     const MAX_CONST_EVAL_DEPTH: usize = 64;
 
-    fn eval_const_value(&self, val: &ConstValue, depth: usize) -> i32 {
+    fn eval_const_value(
+        &self,
+        val: &ConstValue,
+        formulae: &BTreeMap<String, ConstValue>,
+        depth: usize,
+    ) -> i32 {
         if depth > Self::MAX_CONST_EVAL_DEPTH {
             eprintln!("Error [{}#{}]:", self.filename(), self.current_subr_name());
             eprintln!("\tMaximum const-evaluation depth exceeded.");
@@ -226,8 +234,8 @@ impl CodeGen {
             ConstValue::Int(i) => *i as i32,
             ConstValue::Char(byte) => *byte as i32,
             ConstValue::ConstAlias(name) => {
-                if let Some(value) = self.consts.get(name) {
-                    self.eval_const_value(value, depth + 1)
+                if let Some(value) = formulae.get(name) {
+                    self.eval_const_value(value, formulae, depth + 1)
                 } else {
                     eprintln!("Error [{}#{}]:", self.filename(), self.current_subr_name());
                     eprintln!("\tUndefined constant `{name}`.");
@@ -235,8 +243,8 @@ impl CodeGen {
                 }
             }
             ConstValue::BinOp(x, binop, y) => {
-                let x = self.eval_const_value(x, depth + 1);
-                let y = self.eval_const_value(y, depth + 1);
+                let x = self.eval_const_value(x, formulae, depth + 1);
+                let y = self.eval_const_value(y, formulae, depth + 1);
                 binop.eval(x, y)
             }
         }
